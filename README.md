@@ -16,7 +16,7 @@
 
 **Репозиторий:** https://github.com/TheStilk/halyk-covenant-agent
 
-**Архитектура:** hybrid — **deterministic first**, LLM только как fallback (unknown formula / low confidence). Open-set score держится без API-ключей.
+**Архитектура:** hybrid — **deterministic first**; LLM Formula Reader только для **unknown / low-conf** (интерпретация → code считает). Open set **100% без ключей**.
 
 ---
 
@@ -84,14 +84,14 @@ PDF (opaque hashes) + master_ledger_2025.csv
 
 Ключевые технические приёмы:
 
-- **Hybrid** — formula engine first; LLM только interpretation (не арифметика)  
-- **Model swap via env** — `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` (+ optional `MODEL_LABEL`)  
-- **Never-null cells** — `status`/`actual` всегда заполнены (best-effort)  
-- **Extract quality guards** — кириллица, ACC/TXN/$/Статья; fallback backend  
-- **Template-driven** — `COVENANT_IDS` из `submission_template.json`  
+- **Hybrid battle policy** — det always; LLM reader only unknown/low-conf; mismatch → det if known  
+- **Model via env only** — `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `MODEL_LABEL`  
+- **Never-null cells** — sanitize + validate hard-fail  
+- **Extract quality** — markers/cyrillic/density; multi-backend fallback  
+- **Template-driven covenants** — ids from `submission_template.json`  
 - **Taxonomy** — `other_*` ~0.6%  
-- **Battle diagnostics** — в конце `phase3`  
-- **Кэш PDF / Final AUP / Group Capex / Adj EBITDA / NaN / FX / KYC OCR / evidence**  
+- **Battle diagnostics** — end of `phase3`  
+- **Group Capex / Adj EBITDA / NaN fills / FX / KYC OCR / evidence**
 
 ---
 
@@ -100,32 +100,21 @@ PDF (opaque hashes) + master_ledger_2025.csv
 ```
 hakaton/
 ├── README.md
-├── docs/                   # подробная документация
-├── pyproject.toml          # зависимости (uv)
-├── uv.lock
-├── requirements.txt        # uv export (совместимость)
+├── docs/                   # usage, architecture, scoring
+├── archive/                # historical LLM smoke reports (no keys)
+├── pyproject.toml / uv.lock
 ├── .env.example
-├── main.py                 # CLI entrypoint
-├── agent/
-│   ├── config.py           # пути, модели, knobs
-│   ├── models.py           # Pydantic-схемы
-│   ├── state.py            # LangGraph AgentState
-│   ├── graph.py            # граф: load → classify → … → collect
-│   ├── prompts/system.py   # боевые промпты
-│   ├── nodes/              # ноды графа
-│   └── tools/              # ledger, pdf, metrics, formulas, llm
+├── main.py                 # CLI
+├── agent/                  # graph, nodes, tools (det + optional LLM)
 ├── scripts/
 │   ├── smoke_phase1.py
+│   ├── smoke_llm.py
 │   ├── run_one_scenario.py
 │   ├── eval_phase2.py
 │   └── validate_submission.py
 ├── agentic-bank-public/    # open dataset
-│   ├── master_ledger_2025.csv
-│   ├── documents/
-│   ├── submission_template.json
-│   └── ground_truth.json
-├── doc_cache/              # кэш извлечённого текста PDF (gitignored)
-└── submission.json         # выход (gitignored)
+├── doc_cache/              # gitignored
+└── submission.json         # gitignored
 ```
 
 ---
@@ -142,8 +131,9 @@ uv run python main.py classify PATH   # один PDF
 uv run python main.py extract-covenants PATH
 
 uv run python scripts/smoke_phase1.py
+uv run python scripts/smoke_llm.py          # optional, needs LLM_*
 uv run python scripts/run_one_scenario.py P1 P5
-uv run python scripts/eval_phase2.py
+uv run python scripts/eval_phase2.py        # 36/36, no LLM by default
 uv run python scripts/validate_submission.py
 ```
 
@@ -151,25 +141,23 @@ uv run python scripts/validate_submission.py
 
 ---
 
-## LLM (смена модели без правок кода)
+## LLM (optional)
 
-OpenAI-compatible клиент. Вся привязка к модели — **только env**:
+Любой **OpenAI-compatible** endpoint:
 
 ```bash
 LLM_API_KEY=...
 LLM_BASE_URL=https://your-provider/v1
 LLM_MODEL=provider/model-id
-# optional: MODEL_LABEL=...   # поле model в submission; default = LLM_MODEL
+# MODEL_LABEL=...   # submission.model; default = LLM_MODEL
 ```
 
-| Переменная | Назначение |
-|------------|------------|
-| `LLM_*` | Formula Reader / structured / reflection |
-| `CLASSIFY_*` | optional отдельная модель для classify PDF |
-| `MODEL_LABEL` | строка в `submission.json` |
+Battle default: **LLM only when det is unknown/low-conf**  
+(`LLM_FORMULA_READER_ONLY_UNKNOWN=true`).  
+Mismatch on known formulas → **det wins**.
 
-Без ключа пайплайн не падает — det formula engine.  
-Конфиг модели — только `.env` (см. `.env.example`).
+Без ключа: полный det path, open set 100%.  
+Исторические smoke-отчёты: [archive/gemini-llm-probe-20260806/](archive/gemini-llm-probe-20260806/).
 
 ---
 
@@ -211,13 +199,12 @@ uv run python main.py phase3
 uv run python main.py validate
 ```
 
-На private set важно:
+На private set:
 
-1. **Не null** в `status`/`actual`.  
-2. Covenant ids — из **template**.  
-3. Account не только `ACC-7*`.  
-4. Unknown formula → best-effort; с LLM — Formula Reader + code compute.  
-5. Battle diagnostics.
+1. Full **det** always (backup).  
+2. Optional `LLM_*` → reader only on unknown/low-conf.  
+3. Template covenant ids; never-null cells; battle diagnostics.  
+4. `MODEL_LABEL` корректный в submission.
 
 ---
 

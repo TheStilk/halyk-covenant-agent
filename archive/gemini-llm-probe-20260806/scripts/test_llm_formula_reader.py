@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Temporary probe: LLM smoke + Formula Reader det vs LLM comparison.
+"""ARCHIVED probe: LLM Formula Reader det vs LLM comparison (2026-08-06).
 
-NOT for production scoring. Keep until battle rehearsal; then delete.
+Not on production path. Reports live under archive/gemini-llm-probe-20260806/reports/.
 
-Writes detailed JSON + Markdown under test_runs/ (gitignored).
-
-Usage:
-  uv run python scripts/test_llm_formula_reader.py
-  uv run python scripts/test_llm_formula_reader.py --scenarios P1 P4
-  uv run python scripts/test_llm_formula_reader.py --scenarios P1 --no-foundation-cache
+Usage (from repo root):
+  uv run python archive/gemini-llm-probe-20260806/scripts/test_llm_formula_reader.py --scenarios P1 P4
 """
 
 from __future__ import annotations
@@ -127,7 +123,7 @@ class LlmFormulaReaderProbe:
         sleep_between_llm_sec: float = 13.0,
     ) -> None:
         self.scenarios = scenarios
-        self.out_dir = out_dir or (ROOT / "test_runs")
+        self.out_dir = out_dir or (ROOT / "archive" / "gemini-llm-probe-20260806" / "reports")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.rel_tol = rel_tol
         self.sleep_between_llm_sec = sleep_between_llm_sec
@@ -196,7 +192,7 @@ class LlmFormulaReaderProbe:
                 import agent.config as cfg
                 import agent.tools.llm as llm_mod
 
-                alt = "gemini-flash-latest"
+                alt = "'flash-latest-alias'"
                 if cfg.LLM_MODEL != alt:
                     self.notes.append(
                         f"model {cfg.LLM_MODEL!r} unavailable → try {alt!r}"

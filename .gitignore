@@ -17,3 +17,4 @@ build/
 
 # Local secrets and probe outputs (do not commit keys)
 test_runs/
+diffs/

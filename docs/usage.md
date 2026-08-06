@@ -3,7 +3,6 @@
 ## Установка
 
 ```bash
-# Python 3.12+ подтянется через uv при необходимости
 uv sync
 ```
 
@@ -24,119 +23,75 @@ sudo apt install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
 
 ## Конфигурация (`.env`)
 
-Скопируйте `.env.example` → `.env`.
+```bash
+cp .env.example .env
+```
 
 | Переменная | Default | Описание |
 |------------|---------|----------|
-| `TEAM_NAME` | `Сычуанский Соус` | поле submission |
-| `CONTACT_EMAIL` | `serkebaevmadiyar09@gmail.com, zhenis415@gmail.com` | поле submission (обе почты команды) |
+| `TEAM_NAME` | `Сычуанский Соус` | submission.team |
+| `CONTACT_EMAIL` | обе почты команды | submission.contact_email |
 | `DATA_DIR` | `./agentic-bank-public` | датасет |
 | `DOC_CACHE_DIR` | `./doc_cache` | кэш PDF |
-| `LLM_API_KEY` | — | ключ OpenAI-compatible API |
-| `LLM_BASE_URL` | — | `https://host/v1` (любой провайдер) |
-| `LLM_MODEL` | — | id модели у провайдера |
-| `MODEL_LABEL` | =`LLM_MODEL` | поле `model` в submission |
-| `CLASSIFY_API_KEY` / `BASE_URL` / `MODEL` | optional | отдельная модель для classify |
-| `USE_LLM_FORMULA_READER` | `true` | LLM → formula_spec, code → actual |
-| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | mismatch → det engine |
-| `CLASSIFY_USE_LLM` | `false` | LLM для ambiguous PDF |
-| `CONFIDENCE_THRESHOLD` | `0.85` | low-conf / reflection |
+| `LLM_API_KEY` | — | OpenAI-compatible key |
+| `LLM_BASE_URL` | — | `https://host/v1` |
+| `LLM_MODEL` | — | model id у провайдера |
+| `MODEL_LABEL` | =`LLM_MODEL` | submission.model (или `deterministic-formula-engine`) |
+| `USE_LLM_FORMULA_READER` | `true` | enable Formula Reader |
+| `LLM_FORMULA_READER_ONLY_UNKNOWN` | `true` | LLM **только** unknown/low-conf det |
+| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | mismatch + known det → det |
+| `FORMULA_READER_MAX_TEXT_CHARS` | `900` | clip текста ковенанта в reader |
+| `LLM_MAX_TOKENS` | `8192` | max completion tokens |
+| `CLASSIFY_USE_LLM` | `false` | optional LLM classify |
+| `CONFIDENCE_THRESHOLD` | `0.85` | low-conf boundary |
 
-**Смена модели:** правьте только env — не код и не «роли» vendor’ов.
+**Смена провайдера/модели:** только env, без правок кода.
 
 ```bash
-# пример
 export LLM_API_KEY=...
-export LLM_BASE_URL=https://openrouter.ai/api/v1
+export LLM_BASE_URL=https://your-provider/v1
 export LLM_MODEL=your/model-id
 
-uv run python scripts/smoke_llm.py
+uv run python scripts/smoke_llm.py   # available / structured smoke
 ```
+
+Без ключей пайплайн полностью детерминированный.
 
 ---
 
 ## CLI (`main.py`)
 
-Все команды через `uv run` (или активированный `.venv`).
-
-### Полный пайплайн + валидация
-
 ```bash
-uv run python main.py phase3
+uv run python main.py phase3      # full pipeline → submission.json + diagnostics
 uv run python main.py validate
+uv run python main.py foundation  # ledger + classify + covenants only
+uv run python main.py map-accounts
+uv run python main.py classify PATH
+uv run python main.py extract-covenants PATH
 ```
 
-`phase3` / `phase2` пишут `submission.json` и печатают **battle diagnostics**:
+### Battle diagnostics (конец phase3)
 
 ```text
 === BATTLE DIAGNOSTICS ===
 cells filled: 36/36
-unknown formulas: 0
-low confidence: 1 [B4/6.1 conf=0.70]
-bad extracts: 1 [f3fa6d20c8a1.pdf]
-missing amounts: 2 [P7:1, P8:1 (txns=2)]
-scenarios without loan: —
-scenarios without notes: —
-time total: ~100s
-```
-
-`submission.json` в корне:
-
-```json
-{
-  "team": "...",
-  "contact_email": "...",
-  "model": "<MODEL_LABEL or LLM_MODEL>",
-  "answers": {
-    "P1": {
-      "6.1": { "status": "BREACH", "actual": 0.46, "evidence_txn_id": null },
-      "6.2": { ... },
-      "6.3": { ... }
-    }
-  }
-}
+unknown formulas: …
+low confidence: …
+bad extracts: …
+missing amounts: …
+scenarios without loan: …
+scenarios without notes: …
+time total: …
 ```
 
 ### Validate
 
 ```bash
 uv run python main.py validate
-uv run python main.py validate --submission ./submission.json
 uv run python scripts/validate_submission.py
 ```
 
-Проверяет submission относительно `submission_template.json`:
-
-1. Валидный JSON  
-2. Поля `team`, `contact_email`, `model`, `answers`  
-3. Точный набор `scenario_id` и `covenant_id` (нельзя добавлять/удалять/переименовывать)  
-4. `status` ∈ `{COMPLIANT, BREACH}`  
-5. `actual` — число ≥ 0, не больше 2 знаков после запятой  
-6. `evidence_txn_id` — string или null  
-7. **Hard-fail** на null/missing `status` / `actual` (и NaN)  
-
-Pipeline **никогда** не оставляет пустые ячейки: `ensure_filled_cell` → best-effort `BREACH`/`0.0` при нехватке данных.
-
-Вывод:
-
-- `OK — submission is valid` (exit 0)  
-- `INVALID — N error(s):` + нумерованный список (exit 1)  
-
-### Phase 1 — foundation
-
-```bash
-uv run python main.py foundation
-```
-
-Только ledger + classify + covenants (12/12 сценариев с полным набором template clause ids).
-
-### Утилиты
-
-```bash
-uv run python main.py map-accounts
-uv run python main.py classify agentic-bank-public/documents/1d262694c308.pdf
-uv run python main.py extract-covenants agentic-bank-public/documents/1d262694c308.pdf
-```
+Hard-fail на null/missing `status`/`actual`, неверный enum, лишние ключи vs template.
 
 ---
 
@@ -144,95 +99,89 @@ uv run python main.py extract-covenants agentic-bank-public/documents/1d262694c3
 
 | Script | Назначение |
 |--------|------------|
-| `scripts/smoke_phase1.py` | Регрессия Phase 1 без LLM |
-| `scripts/run_one_scenario.py` | 1+ сценариев vs ground_truth |
-| `scripts/eval_phase2.py` | Полный score 36 ячеек + WORST CELLS; `--scenarios` subset |
-| `scripts/validate_submission.py` | Формат submission |
+| `scripts/smoke_phase1.py` | Phase 1 без LLM |
+| `scripts/smoke_llm.py` | LLM available + structured FormulaSpec |
+| `scripts/run_one_scenario.py` | 1+ сценариев vs ground_truth (`--llm` optional) |
+| `scripts/eval_phase2.py` | полный score 36 ячеек; `--scenarios` subset |
+| `scripts/validate_submission.py` | формат submission |
 
 ```bash
-uv run python scripts/smoke_phase1.py
-uv run python scripts/run_one_scenario.py           # default P1 P5
-uv run python scripts/run_one_scenario.py P4
-uv run python scripts/eval_phase2.py
-uv run python scripts/eval_phase2.py --scenarios P5 B1   # holdout-style subset
-uv run python scripts/validate_submission.py --submission ./submission.json
+uv run python scripts/eval_phase2.py                 # 36/36 without LLM calls
+uv run python scripts/eval_phase2.py --scenarios P5 B1
+uv run python scripts/run_one_scenario.py P1
 ```
 
 ---
 
 ## Типичные workflow
 
-### Open set: полный цикл
+### Open set
 
 ```bash
 uv sync
-uv run python scripts/eval_phase2.py    # ожидаем 36.0 / 36.0
+uv run python scripts/eval_phase2.py    # 36.0 / 36.0
 uv run python main.py phase3
 uv run python main.py validate
 ```
 
-### Отладка одной ячейки
-
-```bash
-uv run python scripts/run_one_scenario.py P4
-uv run python scripts/eval_phase2.py --scenarios P4
-```
-
-### Private dataset (боевой день)
+### Private set (боевой день)
 
 ```bash
 export DATA_DIR=/path/to/private-dataset
-# optional: LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
+# optional LLM for unknown formulas:
+# export LLM_API_KEY=... LLM_BASE_URL=... LLM_MODEL=...
 rm -rf doc_cache
 uv run python main.py phase3
-# прочитать === BATTLE DIAGNOSTICS ===
+# read BATTLE DIAGNOSTICS
 uv run python main.py validate
-# сдать submission.json
 ```
 
-Чеклист боя:
+Чеклист:
 
-1. `cells filled` = expected (template × scenarios)  
-2. `unknown formulas` / `low confidence` — кандидаты на LLM  
-3. `bad extracts` / `scenarios without loan|notes` — риск  
-4. `validate` exit 0  
+1. `cells filled` = expected  
+2. `unknown formulas` / `low confidence` — зона LLM  
+3. `bad extracts` / missing loan|notes  
+4. validate exit 0  
+5. `MODEL_LABEL` в submission корректен  
+
+### Hybrid policy (кратко)
+
+1. Always det  
+2. Strong known formula → det only  
+3. Unknown/low-conf + key → Formula Reader + code compute  
+4. Mismatch: known → det; unknown → LLM compute  
+5. API fail → det  
+
+Не гонять все 36 ячеек через LLM на free tier — default policy уже режет лишние вызовы.
 
 ---
 
 ## Кэш документов
 
-- Каталог: `DOC_CACHE_DIR` (default `./doc_cache`).  
-- Ключ: `md5(abs_path:size:mtime_ns:eq=<EXTRACT_QUALITY_VERSION>)`.  
+- `DOC_CACHE_DIR` (default `./doc_cache`)  
+- key includes extract quality version  
 
 ```bash
-rm -rf doc_cache   # после смены extractors, quality version или датасета
+rm -rf doc_cache   # new dataset / extract changes
 ```
 
 ---
 
 ## Отладка
 
-| Симптом | Что проверить |
-|---------|----------------|
-| null status/actual | `ensure_filled_*`, collect_results, validate |
-| degraded extract | `assess_extract_quality`, backends, `diagnostics.bad_extracts` |
-| 0 related-party | KYC OCR, threshold, `L.L.P.` / quotes |
-| Group Capex = borrower only | consolidated FS, segment name = company |
-| Adj EBITDA margin off | OCR «Корректировки EBITDA», порог $300k |
-| Reclass не применился | final AUP vs draft intermediate |
-| NaN amount в ledger | notes/treasury; battle `missing amounts` |
-| EUR в EBITDA | курс в notes (EUR … $USD) |
-| evidence ≠ GT | reclass txn order в `_find_evidence_for_sum` |
-| high other_* share | `classify_txn_category` patterns |
-| unknown formula BREACH/0 | should not happen silent — `_best_effort_unknown` |
-| Медленный eval | OCR KYC (~1–2 мин на 12 сценариев); cold cache rebuild |
+| Симптом | Проверить |
+|---------|-----------|
+| null status/actual | `ensure_filled_*`, validate |
+| degraded PDF | `diagnostics.bad_extracts` |
+| Group Capex off | consolidated PPE + company name |
+| Adj EBITDA margin | OCR one-time + $300k materiality |
+| NaN amount | notes/treasury; battle missing amounts |
+| LLM length / 500 | shorter text clip; det backup |
+| mismatch LLM vs det | expected on some overhead formulas; det wins if known |
 
 ---
 
-## Добавление зависимости
+## Архив LLM-smoke
 
-```bash
-uv add package-name
-uv lock && uv sync
-uv export --no-dev --no-hashes -o requirements.txt   # опционально
-```
+Исторические отчёты (без ключей):  
+`archive/gemini-llm-probe-20260806/` — P1/P4 + hard P3/P5/P7/B1.
