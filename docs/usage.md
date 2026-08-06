@@ -32,16 +32,21 @@ sudo apt install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
 | `CONTACT_EMAIL` | `serkebaevmadiyar09@gmail.com, zhenis415@gmail.com` | поле submission (обе почты команды) |
 | `DATA_DIR` | `./agentic-bank-public` | датасет |
 | `DOC_CACHE_DIR` | `./doc_cache` | кэш PDF |
-| `QWEN_API_KEY` | — | reasoning (или `OPENAI_API_KEY`) |
-| `QWEN_BASE_URL` | OpenRouter | OpenAI-compatible endpoint |
-| `QWEN_MODEL` | `qwen/qwen3.5-max` | slug модели |
-| `GOOGLE_API_KEY` | — | Gemini (или `GEMINI_API_KEY`) |
-| `GEMINI_MODEL` | `gemini-3.0-flash` | slug Flash |
+| `LLM_API_KEY` | — | OpenAI-compatible key (или `QWEN_API_KEY` / `OPENAI_API_KEY`) |
+| `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | любой OpenAI-compatible `/v1` |
+| `LLM_MODEL` | `qwen/qwen3.5-max` | slug модели у провайдера |
+| `USE_LLM_FORMULA_READER` | `true` | LLM читает формулу → code считает |
+| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | при расхождении с det → det |
+| `GOOGLE_API_KEY` | — | optional Gemini classify |
 | `CLASSIFY_USE_LLM` | `false` | Gemini для ambiguous PDF |
-| `CONFIDENCE_THRESHOLD` | `0.85` | порог reflection / Qwen |
-| `MAX_BORROWER_CONCURRENCY` | `6` | задел под parallel |
+| `CONFIDENCE_THRESHOLD` | `0.85` | порог reflection / low-conf |
+| `MODEL_LABEL` | `qwen3.8-max + gemini-3.6-flash` | поле `model` в submission |
 
-`model` в submission: `qwen3.8-max + gemini-3.6-flash` (`config.MODEL_LABEL`).
+Смена провайдера: только `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` — без правок кода.
+
+```bash
+uv run python scripts/smoke_llm.py   # available / unavailable
+```
 
 ---
 
