@@ -4,60 +4,58 @@ from __future__ import annotations
 
 from typing import Optional
 
+from agent.config import FORMULA_READER_MAX_TEXT_CHARS
 from agent.models_formula import FormulaSpec
 from agent.tools.llm import is_llm_available, llm_status_message, structured_invoke
 from agent.tools.metrics import ScenarioMetrics
 
-_SYSTEM = """You are a bank covenant formula interpreter.
-Your ONLY job: read the covenant clause and fill FormulaSpec.
+# Keep system short — long prompts + thinking models hit completion length limits.
+_SYSTEM = """Bank covenant formula interpreter. Output FormulaSpec only.
 Rules:
-- temperature semantics: be precise and conservative
-- Do NOT compute any arithmetic or invent amounts
-- Do NOT invent transaction IDs
-- Extract threshold from text when present (strip $ and commas)
-- comparison: "min" if floor / at least / не менее; "max" if ceiling / not exceed / не превышать
-- numerator_metrics / denominator_metrics: ONLY names from the allowed metric vocabulary
-- Prefer adjusted_ebitda when text says adjusted / adjusted EBITDA / скорректированный
-- Prefer group_capex when text says group / consolidated / Группы
-- related_party_payments for related/аффилированн/связанн payments
-- For ratio A/B: numerator=[A], denominator=[B]
-- For absolute caps: numerator=[metric], denominator=[]
-- confidence reflects interpretation certainty only
-- raw_interpretation: one short sentence in the language of the clause
-Return structured FormulaSpec only.
+- No arithmetic, no invented numbers/txn ids.
+- Extract threshold (strip $ ,). comparison: min (≥/не менее) or max (≤/не превышать).
+- Use ONLY metric tokens listed in the user message.
+- adjusted/скорректированн → adjusted_ebitda; group/Групп → group_capex.
+- related/аффилир/связанн payments → related_party_payments.
+- Ratio A/B → numerator=[A], denominator=[B]. Absolute cap → numerator=[metric], denominator=[].
+- Individual overhead / max single line / max(payroll, utilities): use max_payroll_utilities
+  (NOT sum of payroll+utilities in numerator).
+- raw_interpretation: one short sentence.
 """
 
-_USER_TMPL = """Covenant id: {covenant_id}
-Scenario: {scenario_id}
+_USER_TMPL = """id={covenant_id} sc={scenario_id}
 
-=== COVENANT TEXT ===
+TEXT:
 {covenant_text}
 
-=== AVAILABLE METRIC NAMES (use only these tokens) ===
-revenue, opex, ebitda, adjusted_ebitda, capex, lease, interest, tax, utilities,
-insurance, payroll, marketing, related_party_payments, financing_inflows,
-group_capex, unrestricted_transfers, other_expense,
-max_payroll_tax, max_payroll_utilities, opex_plus_lease, lease_plus_utilities,
-tax_plus_utilities, revenue_plus_financing, opex_plus_capex
-
-=== METRICS SNAPSHOT (for context only — do NOT recalculate) ===
+METRICS (context only, do not recalculate):
 {metrics_summary}
 
-Fill FormulaSpec. Do not calculate the final actual number.
+TOKENS: revenue,opex,ebitda,adjusted_ebitda,capex,lease,interest,tax,utilities,insurance,payroll,marketing,related_party_payments,financing_inflows,group_capex,unrestricted_transfers,other_expense,max_payroll_tax,max_payroll_utilities,opex_plus_lease,lease_plus_utilities,tax_plus_utilities,revenue_plus_financing,opex_plus_capex
+
+Return FormulaSpec only.
 """
 
 
 def metrics_snapshot_for_reader(m: ScenarioMetrics) -> str:
-    """Short metrics block — no full ledger dump."""
+    """Ultra-compact metrics snapshot."""
+    u = float(m.raw_aggregates.get("unrestricted_transfer", 0.0) or 0.0)
     return (
-        f"revenue={m.revenue:.2f} opex={m.opex:.2f} ebitda={m.ebitda:.2f} "
-        f"adjusted_ebitda={m.adjusted_ebitda:.2f} capex={m.capex:.2f} "
-        f"lease={m.lease:.2f} interest={m.interest:.2f} tax={m.tax:.2f} "
-        f"utilities={m.utilities:.2f} insurance={m.insurance:.2f} "
-        f"payroll={m.payroll:.2f} related_party_payments={m.related_party_payments:.2f} "
-        f"financing_inflows={m.financing_inflows:.2f} group_capex={m.group_capex:.2f} "
-        f"unrestricted_transfers={m.raw_aggregates.get('unrestricted_transfer', 0):.2f}"
+        f"rev={m.revenue:.0f} opex={m.opex:.0f} ebitda={m.ebitda:.0f} "
+        f"adj_ebitda={m.adjusted_ebitda:.0f} capex={m.capex:.0f} lease={m.lease:.0f} "
+        f"int={m.interest:.0f} tax={m.tax:.0f} util={m.utilities:.0f} "
+        f"ins={m.insurance:.0f} pay={m.payroll:.0f} rp={m.related_party_payments:.0f} "
+        f"fin={m.financing_inflows:.0f} gcapex={m.group_capex:.0f} unrestr={u:.0f}"
     )
+
+
+def _clip_covenant_text(text: str, max_chars: int) -> str:
+    t = (text or "").strip() or "(empty)"
+    if len(t) <= max_chars:
+        return t
+    # Prefer head (clause header + formula) over tail
+    head = max_chars - 20
+    return t[:head] + "\n…[truncated]…"
 
 
 def read_formula_spec(
@@ -74,7 +72,7 @@ def read_formula_spec(
     user = _USER_TMPL.format(
         covenant_id=covenant_id or "?",
         scenario_id=scenario_id or metrics.scenario_id,
-        covenant_text=(covenant_text or "").strip() or "(empty)",
+        covenant_text=_clip_covenant_text(covenant_text, FORMULA_READER_MAX_TEXT_CHARS),
         metrics_summary=metrics_snapshot_for_reader(metrics),
     )
     return structured_invoke(

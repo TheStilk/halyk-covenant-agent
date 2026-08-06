@@ -93,16 +93,23 @@ GEMINI_MODEL = CLASSIFY_MODEL
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.85"))
 MAX_BORROWER_CONCURRENCY = int(os.getenv("MAX_BORROWER_CONCURRENCY", "6"))
 CLASSIFY_USE_LLM = os.getenv("CLASSIFY_USE_LLM", "false").lower() in {"1", "true", "yes"}
-# LLM Formula Reader: interpret covenant text → formula_spec; code computes numbers
+# LLM Formula Reader: interpret covenant text → formula_spec; code computes numbers.
+# Battle default: only run reader when det is unknown / low-confidence (not every cell).
 USE_LLM_FORMULA_READER = os.getenv("USE_LLM_FORMULA_READER", "true").lower() in {
     "1",
     "true",
     "yes",
 }
-# When LLM formula compute disagrees with det engine, prefer det (safe open-set)
+LLM_FORMULA_READER_ONLY_UNKNOWN = os.getenv(
+    "LLM_FORMULA_READER_ONLY_UNKNOWN", "true"
+).lower() in {"1", "true", "yes"}
+# On mismatch: prefer det when det is strong; prefer LLM-compute when det is unknown
 FORMULA_READER_PREFER_DET_ON_MISMATCH = os.getenv(
     "FORMULA_READER_PREFER_DET_ON_MISMATCH", "true"
 ).lower() in {"1", "true", "yes"}
+# Cap covenant text sent to reader (reduces Gemma length-limit blowups)
+FORMULA_READER_MAX_TEXT_CHARS = int(os.getenv("FORMULA_READER_MAX_TEXT_CHARS", "900"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8192"))
 PDF_TEXT_PREVIEW_CHARS = 3000
 
 # Covenant section keys — loaded from submission_template.json (not hardcoded).

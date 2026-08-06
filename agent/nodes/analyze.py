@@ -9,6 +9,7 @@ from agent.config import (
     CONFIDENCE_THRESHOLD,
     COVENANT_IDS,
     FORMULA_READER_PREFER_DET_ON_MISMATCH,
+    LLM_FORMULA_READER_ONLY_UNKNOWN,
     USE_LLM_FORMULA_READER,
     covenant_ids_for_scenario,
 )
@@ -221,24 +222,38 @@ def analyze_one_covenant(
     metrics: ScenarioMetrics,
     use_llm: bool = True,
 ) -> CovenantVerdict:
-    """Hybrid analysis: det formula_engine always; optional LLM Formula Reader.
+    """Battle hybrid policy (confirmed by P1/P4/P3/P5/P7/B1 probes):
 
-    Path:
-      1) evaluate_covenant (backup / open-set gold)
-      2) If LLM available + USE_LLM_FORMULA_READER:
-         formula_spec (LLM) → compute_from_formula_spec (code only)
-         cross-check vs det; on mismatch prefer det by default
-      3) Else if unknown/low-conf + LLM: legacy structured CovenantVerdict
-      4) Never leave null status/actual
+    1. Always run det formula_engine
+    2. LLM unavailable / ERR → det
+    3. det high-confidence known formula → det (no LLM call)
+    4. det unknown/low-confidence → LLM FormulaSpec + code compute
+    5. mismatch: known-like det → det; unknown det → LLM compute
+    6. Never null status/actual
     """
-    # 1) Deterministic formula engine (includes unknown best-effort)
+    # 1) Deterministic always
     det = evaluate_covenant(covenant_text, metrics, covenant_id=covenant_id)
     unknown = is_unknown_formula_verdict(det)
+    low_conf = det.confidence < CONFIDENCE_THRESHOLD
+    det_strong = (not unknown) and (not low_conf)
 
     llm_ok = bool(use_llm) and is_llm_available()
+    if not llm_ok:
+        return det
 
-    # 2) LLM Formula Reader + deterministic compute
-    if llm_ok and USE_LLM_FORMULA_READER and (covenant_text or "").strip():
+    # 3) Strong known formula — skip LLM (open-set safe, saves RPM)
+    need_reader = USE_LLM_FORMULA_READER and (covenant_text or "").strip()
+    if LLM_FORMULA_READER_ONLY_UNKNOWN:
+        need_reader = need_reader and (unknown or low_conf)
+    if det_strong and LLM_FORMULA_READER_ONLY_UNKNOWN:
+        return det
+
+    # 4) Formula Reader for unknown / low-conf (or all cells if ONLY_UNKNOWN=false)
+    if need_reader:
+        print(
+            f"[analyze] formula_reader {scenario_id}/{covenant_id} "
+            f"(unknown={unknown} conf={det.confidence:.2f})"
+        )
         spec, err = try_read_formula_spec(
             covenant_text=covenant_text,
             metrics=metrics,
@@ -246,53 +261,50 @@ def analyze_one_covenant(
             scenario_id=scenario_id,
         )
         if err:
-            print(f"[analyze] formula_reader skip {scenario_id}/{covenant_id}: {err}")
-        elif spec is not None:
+            print(f"[analyze] formula_reader ERR → det {scenario_id}/{covenant_id}: {err}")
+            return det
+        if spec is not None:
             computed = compute_from_formula_spec(
                 spec, metrics, covenant_id=covenant_id
             )
             agree = specs_agree(computed, det)
             if agree:
-                # Keep det evidence when available; merge reasoning
                 chosen = det.model_copy(deep=True)
                 chosen.reasoning = (
                     f"[formula_reader+det agree] {computed.reasoning} || {det.reasoning}"
                 )
-                chosen.confidence = max(det.confidence, computed.confidence)
-                # Prefer det actual/status (identical within tol) for stable evidence
+                chosen.confidence = max(det.confidence, min(0.95, computed.confidence))
                 return chosen
-            # Mismatch
+
+            # 5) mismatch policy
             print(
                 f"[analyze] formula_reader mismatch {scenario_id}/{covenant_id}: "
                 f"llm={computed.status}/{computed.actual} det={det.status}/{det.actual}"
             )
-            if FORMULA_READER_PREFER_DET_ON_MISMATCH:
+            prefer_det = FORMULA_READER_PREFER_DET_ON_MISMATCH and not unknown
+            if prefer_det:
                 chosen = det.model_copy(deep=True)
                 chosen.confidence = min(det.confidence, 0.55)
                 chosen.reasoning = (
-                    f"[formula_reader cross-check mismatch → det] "
-                    f"LLM={computed.status}/{computed.actual} | {det.reasoning} | "
-                    f"spec={spec.model_dump()}"
+                    f"[mismatch → det] LLM={computed.status}/{computed.actual} | "
+                    f"{det.reasoning} | spec={spec.model_dump()}"
                 )
                 return chosen
-            computed.reasoning = (
-                f"[formula_reader primary; det mismatch] {computed.reasoning} | "
-                f"DET={det.status}/{det.actual}"
-            )
-            computed.confidence = min(computed.confidence, 0.55)
-            # Carry det evidence if compute has none
+            # unknown formula → trust LLM-compute more
             if computed.evidence_txn_id is None and det.evidence_txn_id:
                 computed.evidence_txn_id = det.evidence_txn_id
+            computed.confidence = min(float(computed.confidence), 0.65)
+            computed.reasoning = (
+                f"[mismatch → llm_compute (det unknown)] {computed.reasoning} | "
+                f"DET={det.status}/{det.actual}"
+            )
             return computed
 
-    # 3) No LLM or reader off → det
-    if not llm_ok:
+    # Strong det already returned; if reader off, optional legacy only when weak
+    if det_strong or not USE_LLM_FORMULA_READER:
         return det
 
-    # 4) Legacy structured verdict only for unknown/low-conf when reader off or skipped
-    if not unknown and det.confidence >= CONFIDENCE_THRESHOLD:
-        return det
-
+    # Legacy structured CovenantVerdict (rare path)
     print(
         f"[analyze] LLM verdict fallback {scenario_id}/{covenant_id} "
         f"(unknown={unknown} conf={det.confidence:.2f})"
