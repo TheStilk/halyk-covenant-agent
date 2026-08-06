@@ -30,22 +30,45 @@ CONTACT_EMAIL = os.getenv(
     "CONTACT_EMAIL",
     "serkebaevmadiyar09@gmail.com, zhenis415@gmail.com",
 )
-MODEL_LABEL = "qwen3.8-max + gemini-3.6-flash"
-
 # ---------------------------------------------------------------------------
-# LLM endpoints
+# LLM — provider-agnostic OpenAI-compatible endpoint
+# Change only env to switch provider (OpenRouter, proxy, unofficial, …).
 # ---------------------------------------------------------------------------
-# Qwen 3.8-Max via OpenAI-compatible API (OpenRouter / Alibaba / proxy)
-QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-QWEN_BASE_URL = os.getenv(
-    "QWEN_BASE_URL",
-    os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+# Primary knobs (preferred):
+#   LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+# Backward-compatible aliases:
+#   QWEN_API_KEY / OPENAI_API_KEY, QWEN_BASE_URL / OPENAI_BASE_URL, QWEN_MODEL
+LLM_API_KEY = (
+    os.getenv("LLM_API_KEY")
+    or os.getenv("QWEN_API_KEY")
+    or os.getenv("OPENAI_API_KEY")
+    or ""
 )
-QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen/qwen3.5-max")  # OpenRouter slug; override for native
+LLM_BASE_URL = (
+    os.getenv("LLM_BASE_URL")
+    or os.getenv("QWEN_BASE_URL")
+    or os.getenv("OPENAI_BASE_URL")
+    or "https://openrouter.ai/api/v1"
+)
+LLM_MODEL = (
+    os.getenv("LLM_MODEL")
+    or os.getenv("QWEN_MODEL")
+    or "qwen/qwen3.5-max"
+)
+LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "60"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
 
-# Gemini 3.6 Flash
+# Legacy aliases (same values) for older imports
+QWEN_API_KEY = LLM_API_KEY
+QWEN_BASE_URL = LLM_BASE_URL
+QWEN_MODEL = LLM_MODEL
+
+# Optional Gemini Flash (doc classify only — not required for formula reader)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.0-flash")  # override if slug differs
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.0-flash")
+
+# Label written into submission.json (single place — override via MODEL_LABEL)
+MODEL_LABEL = os.getenv("MODEL_LABEL", "qwen3.8-max + gemini-3.6-flash")
 
 # ---------------------------------------------------------------------------
 # Runtime knobs
@@ -53,6 +76,16 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.0-flash")  # override if slug
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.85"))
 MAX_BORROWER_CONCURRENCY = int(os.getenv("MAX_BORROWER_CONCURRENCY", "6"))
 CLASSIFY_USE_LLM = os.getenv("CLASSIFY_USE_LLM", "false").lower() in {"1", "true", "yes"}
+# LLM Formula Reader: interpret covenant text → formula_spec; code computes numbers
+USE_LLM_FORMULA_READER = os.getenv("USE_LLM_FORMULA_READER", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+# When LLM formula compute disagrees with det engine, prefer det (safe open-set)
+FORMULA_READER_PREFER_DET_ON_MISMATCH = os.getenv(
+    "FORMULA_READER_PREFER_DET_ON_MISMATCH", "true"
+).lower() in {"1", "true", "yes"}
 PDF_TEXT_PREVIEW_CHARS = 3000
 
 # Covenant section keys — loaded from submission_template.json (not hardcoded).

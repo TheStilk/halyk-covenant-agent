@@ -8,7 +8,8 @@ from typing import Any, Optional
 from agent.config import (
     CONFIDENCE_THRESHOLD,
     COVENANT_IDS,
-    QWEN_API_KEY,
+    FORMULA_READER_PREFER_DET_ON_MISMATCH,
+    USE_LLM_FORMULA_READER,
     covenant_ids_for_scenario,
 )
 from agent.models import (
@@ -19,7 +20,10 @@ from agent.models import (
 )
 from agent.prompts.system import COVENANT_USER_PROMPT, REFLECTION_PROMPT, SYSTEM_PROMPT
 from agent.state import AgentState
+from agent.tools.formula_compute import compute_from_formula_spec, specs_agree
 from agent.tools.formula_engine import evaluate_covenant, is_unknown_formula_verdict
+from agent.tools.formula_reader import try_read_formula_spec
+from agent.tools.llm import is_llm_available
 from agent.tools.metrics import ScenarioMetrics, extract_metrics_for_state
 
 
@@ -102,12 +106,14 @@ def analyze_all_covenants_node(state: AgentState) -> dict[str, Any]:
     scenario_ids = state.get("scenario_ids") or list(
         dict.fromkeys(list(covenants_by_sc.keys()) + list(metrics_by_sc.keys()))
     )
-    use_llm = bool(QWEN_API_KEY) and state.get("stage") != "force_deterministic"
+    use_llm = is_llm_available() and state.get("stage") != "force_deterministic"
 
     results: list[FinalCovenantResult] = []
     unknown_formula_cells: list[str] = []
     llm_fallback_cells: list[str] = []
     low_confidence_cells: list[str] = []
+    formula_reader_cells: list[str] = []
+    formula_mismatch_cells: list[str] = []
 
     for sc in scenario_ids:
         cov_map: dict[str, str] = covenants_by_sc.get(sc) or {}
@@ -149,6 +155,10 @@ def analyze_all_covenants_node(state: AgentState) -> dict[str, Any]:
                 unknown_formula_cells.append(cell_key)
             if "[llm" in reason_l or "llm_fallback" in reason_l or "llm_reflect" in reason_l:
                 llm_fallback_cells.append(cell_key)
+            if "formula_spec" in reason_l or "formula_reader" in reason_l:
+                formula_reader_cells.append(cell_key)
+            if "mismatch" in reason_l or "cross-check" in reason_l:
+                formula_mismatch_cells.append(cell_key)
             if verdict.confidence < CONFIDENCE_THRESHOLD:
                 low_confidence_cells.append(
                     f"{cell_key} conf={verdict.confidence:.2f}"
@@ -184,6 +194,10 @@ def analyze_all_covenants_node(state: AgentState) -> dict[str, Any]:
     diagnostics["llm_fallback_cells"] = llm_fallback_cells
     diagnostics["low_confidence_cells"] = low_confidence_cells
     diagnostics["low_confidence_count"] = len(low_confidence_cells)
+    diagnostics["formula_reader_cells"] = formula_reader_cells
+    diagnostics["formula_reader_count"] = len(formula_reader_cells)
+    diagnostics["formula_mismatch_cells"] = formula_mismatch_cells
+    diagnostics["formula_mismatch_count"] = len(formula_mismatch_cells)
     if unknown_formula_cells:
         print(
             f"[analyze] unknown/best-effort formulas: {len(unknown_formula_cells)} "
@@ -207,26 +221,80 @@ def analyze_one_covenant(
     metrics: ScenarioMetrics,
     use_llm: bool = True,
 ) -> CovenantVerdict:
-    """Analyze a single covenant: deterministic first; LLM only for unknown/low-conf.
+    """Hybrid analysis: det formula_engine always; optional LLM Formula Reader.
 
-    Known open-set formulas (high conf) never go to LLM.
-    Unknown formula_id → best-effort det, then optional structured LLM if key set.
+    Path:
+      1) evaluate_covenant (backup / open-set gold)
+      2) If LLM available + USE_LLM_FORMULA_READER:
+         formula_spec (LLM) → compute_from_formula_spec (code only)
+         cross-check vs det; on mismatch prefer det by default
+      3) Else if unknown/low-conf + LLM: legacy structured CovenantVerdict
+      4) Never leave null status/actual
     """
     # 1) Deterministic formula engine (includes unknown best-effort)
     det = evaluate_covenant(covenant_text, metrics, covenant_id=covenant_id)
     unknown = is_unknown_formula_verdict(det)
 
-    # 2) No LLM key / disabled → always return filled deterministic cell
-    if not use_llm or not QWEN_API_KEY:
+    llm_ok = bool(use_llm) and is_llm_available()
+
+    # 2) LLM Formula Reader + deterministic compute
+    if llm_ok and USE_LLM_FORMULA_READER and (covenant_text or "").strip():
+        spec, err = try_read_formula_spec(
+            covenant_text=covenant_text,
+            metrics=metrics,
+            covenant_id=covenant_id,
+            scenario_id=scenario_id,
+        )
+        if err:
+            print(f"[analyze] formula_reader skip {scenario_id}/{covenant_id}: {err}")
+        elif spec is not None:
+            computed = compute_from_formula_spec(
+                spec, metrics, covenant_id=covenant_id
+            )
+            agree = specs_agree(computed, det)
+            if agree:
+                # Keep det evidence when available; merge reasoning
+                chosen = det.model_copy(deep=True)
+                chosen.reasoning = (
+                    f"[formula_reader+det agree] {computed.reasoning} || {det.reasoning}"
+                )
+                chosen.confidence = max(det.confidence, computed.confidence)
+                # Prefer det actual/status (identical within tol) for stable evidence
+                return chosen
+            # Mismatch
+            print(
+                f"[analyze] formula_reader mismatch {scenario_id}/{covenant_id}: "
+                f"llm={computed.status}/{computed.actual} det={det.status}/{det.actual}"
+            )
+            if FORMULA_READER_PREFER_DET_ON_MISMATCH:
+                chosen = det.model_copy(deep=True)
+                chosen.confidence = min(det.confidence, 0.55)
+                chosen.reasoning = (
+                    f"[formula_reader cross-check mismatch → det] "
+                    f"LLM={computed.status}/{computed.actual} | {det.reasoning} | "
+                    f"spec={spec.model_dump()}"
+                )
+                return chosen
+            computed.reasoning = (
+                f"[formula_reader primary; det mismatch] {computed.reasoning} | "
+                f"DET={det.status}/{det.actual}"
+            )
+            computed.confidence = min(computed.confidence, 0.55)
+            # Carry det evidence if compute has none
+            if computed.evidence_txn_id is None and det.evidence_txn_id:
+                computed.evidence_txn_id = det.evidence_txn_id
+            return computed
+
+    # 3) No LLM or reader off → det
+    if not llm_ok:
         return det
 
-    # 3) High-confidence known formula → leave untouched
+    # 4) Legacy structured verdict only for unknown/low-conf when reader off or skipped
     if not unknown and det.confidence >= CONFIDENCE_THRESHOLD:
         return det
 
-    # 4) Unknown or low-confidence → Qwen structured fallback (inactive without key)
     print(
-        f"[analyze] LLM fallback {scenario_id}/{covenant_id} "
+        f"[analyze] LLM verdict fallback {scenario_id}/{covenant_id} "
         f"(unknown={unknown} conf={det.confidence:.2f})"
     )
     try:
@@ -237,7 +305,6 @@ def analyze_one_covenant(
             covenant_text=covenant_text,
             metrics=metrics,
         )
-        # For unknown: prefer LLM when conf >= det; always tag reasoning
         if llm_verdict.confidence >= det.confidence:
             chosen = llm_verdict
             chosen.reasoning = (
@@ -249,11 +316,10 @@ def analyze_one_covenant(
                 f"DET: {det.reasoning} | LLM(lower_conf): {llm_verdict.reasoning}"
             )
     except Exception as exc:  # noqa: BLE001
-        print(f"[analyze] Qwen failed {scenario_id}/{covenant_id}: {exc}")
+        print(f"[analyze] LLM verdict failed {scenario_id}/{covenant_id}: {exc}")
         chosen = det
 
-    # 5) Reflection only if still weak
-    if chosen.confidence < CONFIDENCE_THRESHOLD and QWEN_API_KEY:
+    if chosen.confidence < CONFIDENCE_THRESHOLD and is_llm_available():
         try:
             reflected = _qwen_reflect(
                 previous=chosen,
