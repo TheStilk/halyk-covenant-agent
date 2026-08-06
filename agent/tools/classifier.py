@@ -1,7 +1,7 @@
 """PDF document classifier: loan_agreement / financial_notes / kyc / junk.
 
 Primary path is a fast rule-based classifier (deterministic, free).
-Optional Gemini Flash path when CLASSIFY_USE_LLM=true or rules are ambiguous.
+Optional LLM path when CLASSIFY_USE_LLM=true or rules are ambiguous.
 """
 
 from __future__ import annotations
@@ -191,7 +191,7 @@ def classify_document(
     use_llm: Optional[bool] = None,
     account_to_scenario: Optional[dict[str, str]] = None,
 ) -> DocClassification:
-    """Classify a document; optionally fall back to Gemini for low confidence."""
+    """Classify a document; optionally fall back to LLM for low confidence."""
     result = classify_text_rules(text, path=path)
 
     # Re-rank account using ledger mapping when available
@@ -231,13 +231,13 @@ def classify_document(
 
 
 def classify_text_llm(text: str, path: str = "") -> DocClassification:
-    """Gemini Flash classification (Master Plan §6.4)."""
+    """Optional LLM classification (CLASSIFY_* or primary LLM_*)."""
     from agent.prompts.system import DOC_CLASSIFY_PROMPT
-    from agent.tools.llm import get_gemini
+    from agent.tools.llm import get_classify_model
 
     preview = text[:PDF_TEXT_PREVIEW_CHARS]
     prompt = DOC_CLASSIFY_PROMPT.format(text=preview)
-    llm = get_gemini(temperature=0.0)
+    llm = get_classify_model(temperature=0.0)
     raw = llm.invoke(prompt)
     content = raw.content if hasattr(raw, "content") else str(raw)
     label = str(content).strip().lower()

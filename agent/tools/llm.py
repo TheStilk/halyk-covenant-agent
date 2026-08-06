@@ -1,12 +1,12 @@
 """Provider-agnostic OpenAI-compatible LLM client.
 
-Configure via env only (no business-logic hardcoding of vendor):
+Swap provider/model via env only:
 
   LLM_API_KEY=...
-  LLM_BASE_URL=https://openrouter.ai/api/v1   # or any OpenAI-compatible /v1
-  LLM_MODEL=qwen/qwen3.5-max
+  LLM_BASE_URL=https://host/v1
+  LLM_MODEL=any-model-id
 
-Aliases: QWEN_* / OPENAI_* still work (see agent.config).
+No vendor-specific roles in business logic.
 """
 
 from __future__ import annotations
@@ -18,8 +18,9 @@ from typing import Any, Optional, Type, TypeVar
 from pydantic import BaseModel
 
 from agent.config import (
-    GEMINI_MODEL,
-    GOOGLE_API_KEY,
+    CLASSIFY_API_KEY,
+    CLASSIFY_BASE_URL,
+    CLASSIFY_MODEL,
     LLM_API_KEY,
     LLM_BASE_URL,
     LLM_MAX_RETRIES,
@@ -31,32 +32,36 @@ T = TypeVar("T", bound=BaseModel)
 
 
 def is_llm_available() -> bool:
-    """True when API key + base URL + model are configured."""
+    """True when primary chat LLM is fully configured."""
     return bool(LLM_API_KEY and LLM_BASE_URL and LLM_MODEL)
 
 
 def llm_status_message() -> str:
+    missing = []
     if not LLM_API_KEY:
-        return "LLM unavailable: LLM_API_KEY (or QWEN_API_KEY/OPENAI_API_KEY) not set"
+        missing.append("LLM_API_KEY")
     if not LLM_BASE_URL:
-        return "LLM unavailable: LLM_BASE_URL not set"
+        missing.append("LLM_BASE_URL")
     if not LLM_MODEL:
-        return "LLM unavailable: LLM_MODEL not set"
+        missing.append("LLM_MODEL")
+    if missing:
+        return f"LLM unavailable: set {', '.join(missing)} in env"
     return f"LLM available: model={LLM_MODEL} base={LLM_BASE_URL}"
 
 
-@lru_cache(maxsize=8)
-def get_chat_model(temperature: float = 0.0) -> Any:
-    """OpenAI-compatible chat model (ChatOpenAI) for any provider behind base_url."""
-    if not is_llm_available():
-        raise RuntimeError(llm_status_message())
+def _make_chat(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    temperature: float,
+) -> Any:
     from langchain_openai import ChatOpenAI
 
-    # request_timeout / max_retries depend on langchain_openai version
     kwargs: dict[str, Any] = {
-        "model": LLM_MODEL,
-        "api_key": LLM_API_KEY,
-        "base_url": LLM_BASE_URL,
+        "model": model,
+        "api_key": api_key,
+        "base_url": base_url,
         "temperature": temperature,
         "max_tokens": 4096,
     }
@@ -70,26 +75,66 @@ def get_chat_model(temperature: float = 0.0) -> Any:
         return ChatOpenAI(**kwargs)
 
 
-def get_qwen(temperature: float = 0.0) -> Any:
-    """Backward-compatible alias → provider-agnostic chat model."""
+@lru_cache(maxsize=8)
+def get_chat_model(temperature: float = 0.0) -> Any:
+    """Primary OpenAI-compatible chat model from LLM_* env."""
+    if not is_llm_available():
+        raise RuntimeError(llm_status_message())
+    return _make_chat(
+        api_key=LLM_API_KEY,
+        base_url=LLM_BASE_URL,
+        model=LLM_MODEL,
+        temperature=temperature,
+    )
+
+
+def get_llm(temperature: float = 0.0) -> Any:
+    """Alias for get_chat_model (preferred name in call sites)."""
     return get_chat_model(temperature=temperature)
 
 
-@lru_cache(maxsize=4)
-def get_gemini(temperature: float = 0.0) -> Any:
-    """Optional Gemini Flash for doc classify only (separate from formula LLM)."""
-    if not GOOGLE_API_KEY:
-        raise RuntimeError(
-            "GOOGLE_API_KEY (or GEMINI_API_KEY) is not set. "
-            "Optional — not required for formula reader."
-        )
-    from langchain_google_genai import ChatGoogleGenerativeAI
+# Backward-compatible name — same as get_llm
+def get_qwen(temperature: float = 0.0) -> Any:
+    return get_chat_model(temperature=temperature)
 
-    return ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        google_api_key=GOOGLE_API_KEY,
-        temperature=temperature,
-    )
+
+def is_classify_llm_available() -> bool:
+    """Classify LLM: dedicated CLASSIFY_* or fallback to primary LLM_*."""
+    if CLASSIFY_API_KEY and CLASSIFY_BASE_URL and CLASSIFY_MODEL:
+        # If only Google key is set without OpenAI-compatible base, not usable here
+        if CLASSIFY_BASE_URL:
+            return True
+    return is_llm_available()
+
+
+@lru_cache(maxsize=8)
+def get_classify_model(temperature: float = 0.0) -> Any:
+    """Model for optional PDF classify (OpenAI-compatible).
+
+    Prefer CLASSIFY_* if set; else primary LLM_*.
+    """
+    if CLASSIFY_API_KEY and CLASSIFY_BASE_URL and CLASSIFY_MODEL:
+        return _make_chat(
+            api_key=CLASSIFY_API_KEY,
+            base_url=CLASSIFY_BASE_URL,
+            model=CLASSIFY_MODEL,
+            temperature=temperature,
+        )
+    return get_chat_model(temperature=temperature)
+
+
+def get_gemini(temperature: float = 0.0) -> Any:
+    """Deprecated alias → get_classify_model (OpenAI-compatible only)."""
+    return get_classify_model(temperature=temperature)
+
+
+def llm_structured(
+    schema: Type[BaseModel],
+    *,
+    temperature: float = 0.0,
+) -> Any:
+    llm = get_chat_model(temperature=temperature)
+    return llm.with_structured_output(schema)
 
 
 def qwen_structured(
@@ -97,9 +142,8 @@ def qwen_structured(
     *,
     temperature: float = 0.0,
 ) -> Any:
-    """Structured output runner (any OpenAI-compatible model)."""
-    llm = get_chat_model(temperature=temperature)
-    return llm.with_structured_output(schema)
+    """Deprecated alias → llm_structured."""
+    return llm_structured(schema, temperature=temperature)
 
 
 def structured_invoke(
@@ -110,7 +154,7 @@ def structured_invoke(
     temperature: float = 0.0,
     max_retries: Optional[int] = None,
 ) -> T:
-    """Invoke structured output with simple retry. Raises if LLM unavailable or all retries fail."""
+    """Invoke structured output with simple retry."""
     if not is_llm_available():
         raise RuntimeError(llm_status_message())
 
@@ -144,7 +188,6 @@ def invoke_json_text(
     user: str,
     temperature: float = 0.0,
 ) -> str:
-    """Plain text invoke (for smoke / free-form JSON parse fallback)."""
     if not is_llm_available():
         raise RuntimeError(llm_status_message())
     llm = get_chat_model(temperature=temperature)
@@ -159,7 +202,6 @@ def invoke_with_system(
     *,
     use_cache_control: bool = True,
 ) -> Any:
-    """Invoke chat model with stable system prompt first."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     messages: list[Any] = []
