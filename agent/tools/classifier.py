@@ -12,7 +12,11 @@ from typing import Optional
 
 from agent.config import CLASSIFY_USE_LLM, PDF_TEXT_PREVIEW_CHARS
 from agent.models import DocClassification, DocType
-from agent.tools.pdf_extract import find_account_ids, find_company_names
+from agent.tools.pdf_extract import (
+    find_account_ids,
+    find_company_names,
+    prefer_borrower_account,
+)
 
 # ---------------------------------------------------------------------------
 # Strong signal patterns (order matters for scoring)
@@ -166,11 +170,8 @@ def classify_text_rules(text: str, path: str = "") -> DocClassification:
     accounts = find_account_ids(text)
     companies = find_company_names(text)
 
-    # Prefer ACC-7xxx (borrower) over ACC-9xxx noise if both appear
-    account_id: Optional[str] = None
-    if accounts:
-        borrower = [a for a in accounts if a.startswith("ACC-7")]
-        account_id = borrower[0] if borrower else accounts[0]
+    # Prefer mapped borrowers / non-noise accounts (not hard-coded ACC-7*)
+    account_id: Optional[str] = prefer_borrower_account(accounts)
 
     return DocClassification(
         path=path,
@@ -192,6 +193,15 @@ def classify_document(
 ) -> DocClassification:
     """Classify a document; optionally fall back to Gemini for low confidence."""
     result = classify_text_rules(text, path=path)
+
+    # Re-rank account using ledger mapping when available
+    if account_to_scenario:
+        accounts = find_account_ids(text)
+        preferred = prefer_borrower_account(
+            accounts, account_to_scenario=account_to_scenario
+        )
+        if preferred:
+            result.account_id = preferred
 
     if account_to_scenario and result.account_id:
         result.scenario_id = account_to_scenario.get(result.account_id)
@@ -247,10 +257,7 @@ def classify_text_llm(text: str, path: str = "") -> DocClassification:
 
     accounts = find_account_ids(text)
     companies = find_company_names(text)
-    account_id = None
-    if accounts:
-        borrower = [a for a in accounts if a.startswith("ACC-7")]
-        account_id = borrower[0] if borrower else accounts[0]
+    account_id = prefer_borrower_account(accounts)
 
     return DocClassification(
         path=path,

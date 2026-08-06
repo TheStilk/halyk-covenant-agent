@@ -42,24 +42,63 @@ def cmd_foundation(_: argparse.Namespace) -> int:
 
 
 def cmd_phase2(_: argparse.Namespace) -> int:
-    from agent.graph import run_phase2
-    from agent.config import SUBMISSION_PATH, TEAM_NAME, CONTACT_EMAIL, MODEL_LABEL
     import json
+    import time
 
-    print("=== Phase 2: Full calculation pipeline ===")
+    from agent.config import (
+        CONTACT_EMAIL,
+        MODEL_LABEL,
+        SUBMISSION_PATH,
+        TEAM_NAME,
+        covenant_ids_for_scenario,
+    )
+    from agent.graph import run_phase2
+    from agent.models import ensure_filled_answers
+    from agent.tools.battle_diagnostics import print_battle_diagnostics
+
+    print("=== Phase 2/3: Full calculation pipeline ===")
+    t0 = time.perf_counter()
     state = run_phase2()
+    elapsed = time.perf_counter() - t0
     print(f"stage={state.get('stage')} error={state.get('error')}")
     answers = (state.get("documents") or {}).get("submission_answers") or {}
+    # Per-scenario template ids (private set may differ from 6.1/6.2/6.3)
+    filled: dict = {}
+    for sc in state.get("scenario_ids") or list(answers.keys()):
+        filled[sc] = ensure_filled_answers(
+            {sc: answers.get(sc) or {}},
+            covenant_ids=covenant_ids_for_scenario(sc),
+            scenario_ids=[sc],
+        )[sc]
+    answers = filled
     submission = {
         "team": TEAM_NAME,
         "contact_email": CONTACT_EMAIL,
         "model": MODEL_LABEL,
         "answers": answers,
     }
-    SUBMISSION_PATH.write_text(json.dumps(submission, indent=2, ensure_ascii=False), encoding="utf-8")
+    SUBMISSION_PATH.write_text(
+        json.dumps(submission, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     print(f"Wrote {SUBMISSION_PATH}")
-    n = sum(1 for sc in answers.values() for c in sc.values() if c.get("status"))
-    print(f"Filled cells: {n}")
+
+    report = print_battle_diagnostics(state, answers=answers, elapsed_sec=elapsed)
+
+    nulls = [
+        f"{sc}/{cid}"
+        for sc, cmap in answers.items()
+        for cid, c in cmap.items()
+        if c.get("status") is None or c.get("actual") is None
+    ]
+    if nulls:
+        print(f"ERROR null status/actual cells: {nulls}")
+        return 1
+    if report.get("cells_filled", 0) < report.get("cells_expected", 0):
+        print(
+            f"ERROR incomplete cells: "
+            f"{report.get('cells_filled')}/{report.get('cells_expected')}"
+        )
+        return 1
     return 0
 
 

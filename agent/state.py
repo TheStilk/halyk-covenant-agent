@@ -29,6 +29,9 @@ class AgentState(TypedDict, total=False):
     doc_index: list[dict]  # list of classification dicts
     docs_by_scenario: dict[str, dict[str, list[str]]]  # scenario → type → paths
 
+    # Battle / quality diagnostics (bad extracts, unknown formulas, …)
+    diagnostics: dict[str, Any]
+
     # Results (reducer: append)
     results: Annotated[list[FinalCovenantResult], operator.add]
 
