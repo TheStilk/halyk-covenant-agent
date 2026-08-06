@@ -9,6 +9,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from agent.console import setup_console  # noqa: E402
+
+setup_console()
+
 
 def main() -> int:
     from agent.config import LLM_BASE_URL, LLM_MODEL, MODEL_LABEL
