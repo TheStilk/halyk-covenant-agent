@@ -75,9 +75,11 @@ Phase 2/3 — полный граф до `collect_results`.
 | `classifier.py` | rules + prefer mapped / non-noise account |
 | `covenants.py` | template ids → clause block; fallback Статья/Article N |
 | `metrics.py` | KYC, AUP, taxonomy, FX, NaN fills, Group Capex, Adj EBITDA |
-| `formula_engine.py` | known formulas + unknown best-effort |
+| `formula_engine.py` | known formulas + unknown best-effort (**primary without key**) |
+| `formula_reader.py` | LLM → `FormulaSpec` only (no arithmetic) |
+| `formula_compute.py` | `FormulaSpec` + metrics → actual/status (code) |
 | `battle_diagnostics.py` | сводка cells / unknown / bad extracts / time |
-| `llm.py` | OpenAI-compatible client (`LLM_*` env) |
+| `llm.py` | provider-agnostic OpenAI-compatible client (`LLM_*`) |
 
 ### `agent/models.py` — схемы
 
@@ -90,11 +92,12 @@ Phase 2/3 — полный граф до `collect_results`.
 ### `agent/config.py`
 
 - `COVENANT_IDS` / `COVENANT_IDS_BY_SCENARIO` — из `submission_template.json`  
-- `covenant_ids_for_scenario(sc)` — per-scenario ids (private set может отличаться)  
+- `covenant_ids_for_scenario(sc)` — per-scenario ids  
+- `LLM_*`, `MODEL_LABEL`, `LLM_FORMULA_READER_ONLY_UNKNOWN`, mismatch policy knobs  
 
-### `agent/prompts/system.py`
+### `agent/models_formula.py`
 
-Боевые промпты (`agent/prompts/system.py`).
+- `FormulaSpec` — structured interpretation (kind, comparison, threshold, metrics lists)
 
 ---
 
@@ -182,17 +185,34 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 
 ---
 
-## Analyze path (LLM)
+## Analyze path (battle policy)
 
-`analyze_one_covenant`:
+`analyze_one_covenant` (`agent/nodes/analyze.py`):
 
-1. `evaluate_covenant` (known high-conf **без** LLM)  
-2. При `LLM_*` + `USE_LLM_FORMULA_READER` → FormulaSpec (LLM) + compute (code), cross-check с det  
-3. Unknown / low conf → optional structured verdict / reflection  
-4. Без ключа — det best-effort, ячейка всё равно заполнена  
+```text
+1. Always: det = evaluate_covenant(...)
+2. LLM unavailable / reader ERR → det
+3. det high-conf known formula → det   # no LLM call (open-set + RPM)
+4. det unknown / low-conf + LLM_*:
+      FormulaSpec (LLM) → compute_from_formula_spec (code)
+5. mismatch:
+      known-like det → det
+      unknown det → LLM compute
+6. never null status/actual
+```
 
-Модель **не зашита** в логику: только `LLM_MODEL` / `MODEL_LABEL`.  
-Open set: 100% на formula engine без ключей.
+Env (defaults battle-safe):
+
+| Knob | Default | Meaning |
+|------|---------|---------|
+| `USE_LLM_FORMULA_READER` | true | enable reader path |
+| `LLM_FORMULA_READER_ONLY_UNKNOWN` | true | only when det weak |
+| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | true | prefer det if det known |
+| `FORMULA_READER_MAX_TEXT_CHARS` | 900 | clip covenant text to reader |
+| `LLM_MAX_TOKENS` | 8192 | completion budget |
+
+Модель **только** из env (`LLM_MODEL` / `MODEL_LABEL`).  
+Open set без ключа: **100%** на formula engine.
 
 ---
 
@@ -260,6 +280,6 @@ time total: …
 1. Новый тип ковенанта → handler + `detect_formula_id` (не ломать open-set 36/36).  
 2. Новая категория ledger → `classify_txn_category` (не ломать revenue/capex/rp/tax/utilities).  
 3. Новый source метрики → `metrics.py` + `ScenarioMetrics`.  
-4. LLM Formula Reader (planned) — LLM читает формулировку → code считает; det engine остаётся backup.
+4. Новые private-set формулировки — через Formula Reader (LLM) + det backup.
 
-Не ломать: mapping account→scenario, схему `answers`, never-null cells, actual ≥ 0 с 2 знаками.
+Не ломать: mapping account→scenario, схему `answers`, never-null cells, actual ≥ 0 с 2 знаками, open-set 36/36.
