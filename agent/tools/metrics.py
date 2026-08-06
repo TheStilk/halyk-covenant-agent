@@ -121,6 +121,10 @@ class ScenarioMetrics:
     unrestricted_transfer_txns: list[str] = field(default_factory=list)
     unrestricted_subsidiaries: list[SubsidiaryPledge] = field(default_factory=list)
     add_backs: float = 0.0
+    # One-time items from "Корректировки EBITDA" (all disclosed; add-backs = those ≥ threshold)
+    one_time_items: list[dict[str, Any]] = field(default_factory=list)
+    add_back_threshold: float = 300_000.0
+    non_qualifying_one_time: float = 0.0  # disclosed one-time below materiality (stay in expense)
     notes_text: str = ""
     kyc_text: str = ""
     raw_aggregates: dict[str, float] = field(default_factory=dict)
@@ -705,9 +709,66 @@ _FX_PAIR_RE2 = re.compile(
     re.I | re.S,
 )
 
+# EBITDA one-time add-back table rows: ... $251,338.94
+_ONE_TIME_AMOUNT_RE = re.compile(r"\$([0-9,]+(?:\.[0-9]+)?)")
+_ADD_BACK_THRESHOLD_RE = re.compile(
+    r"(?:не\s+менее|at\s+least|порог\w*|существенност\w*)\s+\$?\s*([0-9,]+(?:\.[0-9]+)?)",
+    re.I,
+)
+
 
 def _parse_money(s: str) -> float:
     return float(s.replace(",", "").replace(" ", ""))
+
+
+def parse_ebitda_adjustments(text: str) -> tuple[list[dict[str, Any]], float]:
+    """Parse one-time items and materiality threshold from EBITDA adjustment notes.
+
+    Returns (items, threshold). Items are dicts with amount (positive) and raw line.
+    """
+    threshold = 300_000.0
+    # Prefer the covenant-adjustment section
+    section = text
+    for marker in (
+        "Корректировки EBITDA",
+        "разовые статьи",
+        "Adjusted EBITDA",
+        "add-back",
+        "обратному добавлению",
+    ):
+        idx = text.lower().find(marker.lower())
+        if idx >= 0:
+            section = text[idx : idx + 2500]
+            break
+
+    thr_m = _ADD_BACK_THRESHOLD_RE.search(section)
+    if thr_m:
+        threshold = _parse_money(thr_m.group(1))
+
+    items: list[dict[str, Any]] = []
+    seen_amt: set[float] = set()
+    # Lines that look like adjustment rows (have a $ amount and are not the threshold sentence)
+    for ln in section.splitlines():
+        if "не менее" in ln.lower() or "меньшей суммы" in ln.lower() or "at least" in ln.lower():
+            continue
+        if "порог" in ln.lower() and "$" in ln:
+            continue
+        amounts = _ONE_TIME_AMOUNT_RE.findall(ln)
+        if not amounts:
+            continue
+        # Skip pure headers
+        if re.search(r"Характер|Контрагент|Сумма\s*$", ln, re.I):
+            continue
+        for a in amounts:
+            amt = _parse_money(a)
+            if amt < 1000:  # noise
+                continue
+            key = round(amt, 2)
+            if key in seen_amt:
+                continue
+            seen_amt.add(key)
+            items.append({"amount": key, "raw": ln.strip()[:200]})
+    return items, threshold
 
 
 def parse_missing_ledger_amounts(text: str) -> dict[str, float]:
@@ -920,6 +981,47 @@ def extract_scenario_metrics(
         gc = parse_group_capex_from_text(text)
         if gc and gc > metrics.group_capex:
             metrics.group_capex = gc
+    # OCR financial notes — EBITDA add-back tables are often image-only
+    for path in all_doc_paths:
+        try:
+            base = read_pdf_with_cache(path).text
+        except Exception:  # noqa: BLE001
+            base = ""
+        if "EBITDA" in base or "Корректировк" in base or "разовы" in base.lower():
+            try:
+                ocr = ocr_pdf_images(path)
+            except Exception:  # noqa: BLE001
+                ocr = ""
+            if ocr:
+                notes_parts.append(ocr)
+                items, thr = parse_ebitda_adjustments(ocr)
+                if items:
+                    metrics.one_time_items = items
+                    metrics.add_back_threshold = thr
+                    metrics.add_backs = round(
+                        sum(i["amount"] for i in items if i["amount"] >= thr), 2
+                    )
+                    metrics.non_qualifying_one_time = round(
+                        sum(i["amount"] for i in items if i["amount"] < thr), 2
+                    )
+                    print(
+                        f"[metrics] {scenario_id} EBITDA one-time items={len(items)} "
+                        f"thr={thr:.0f} add_backs={metrics.add_backs:.2f} "
+                        f"non_qual={metrics.non_qualifying_one_time:.2f}"
+                    )
+        # also try plain text
+        if not metrics.one_time_items:
+            items, thr = parse_ebitda_adjustments(base)
+            if items:
+                metrics.one_time_items = items
+                metrics.add_back_threshold = thr
+                metrics.add_backs = round(
+                    sum(i["amount"] for i in items if i["amount"] >= thr), 2
+                )
+                metrics.non_qualifying_one_time = round(
+                    sum(i["amount"] for i in items if i["amount"] < thr), 2
+                )
+
     metrics.notes_text = "\n\n".join(notes_parts)
 
     # Treasury / internal memos often hold NaN ledger amounts (scan by account_id)
@@ -1100,7 +1202,16 @@ def extract_scenario_metrics(
     metrics.financing_inflows = round(buckets.get("financing", 0.0), 2)
 
     metrics.ebitda = round(metrics.revenue - metrics.opex, 2)
-    metrics.adjusted_ebitda = round(metrics.ebitda + metrics.add_backs, 2)
+    # Adjusted EBITDA (covenant): Rev − OpEx − all disclosed one-time + qualifying add-backs
+    # (= Rev − OpEx − non-qualifying one-time). One-time items sit outside the opex
+    # category in the ledger (other_expense) but are operating expenses for this covenant.
+    if metrics.one_time_items:
+        all_one_time = sum(i["amount"] for i in metrics.one_time_items)
+        metrics.adjusted_ebitda = round(
+            metrics.ebitda - all_one_time + metrics.add_backs, 2
+        )
+    else:
+        metrics.adjusted_ebitda = round(metrics.ebitda + metrics.add_backs, 2)
 
     metrics.revenue_txns = bucket_txns.get("revenue", [])
     metrics.capex_txns = bucket_txns.get("capex", [])
