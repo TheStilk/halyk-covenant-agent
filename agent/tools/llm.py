@@ -17,36 +17,27 @@ from typing import Any, Optional, Type, TypeVar
 
 from pydantic import BaseModel
 
-from agent.config import (
-    CLASSIFY_API_KEY,
-    CLASSIFY_BASE_URL,
-    CLASSIFY_MODEL,
-    LLM_API_KEY,
-    LLM_BASE_URL,
-    LLM_MAX_RETRIES,
-    LLM_MODEL,
-    LLM_TIMEOUT_SEC,
-)
+import agent.config as _cfg
 
 T = TypeVar("T", bound=BaseModel)
 
 
 def is_llm_available() -> bool:
-    """True when primary chat LLM is fully configured."""
-    return bool(LLM_API_KEY and LLM_BASE_URL and LLM_MODEL)
+    """True when primary chat LLM is fully configured (reads live config)."""
+    return bool(_cfg.LLM_API_KEY and _cfg.LLM_BASE_URL and _cfg.LLM_MODEL)
 
 
 def llm_status_message() -> str:
     missing = []
-    if not LLM_API_KEY:
+    if not _cfg.LLM_API_KEY:
         missing.append("LLM_API_KEY")
-    if not LLM_BASE_URL:
+    if not _cfg.LLM_BASE_URL:
         missing.append("LLM_BASE_URL")
-    if not LLM_MODEL:
+    if not _cfg.LLM_MODEL:
         missing.append("LLM_MODEL")
     if missing:
         return f"LLM unavailable: set {', '.join(missing)} in env"
-    return f"LLM available: model={LLM_MODEL} base={LLM_BASE_URL}"
+    return f"LLM available: model={_cfg.LLM_MODEL} base={_cfg.LLM_BASE_URL}"
 
 
 def _make_chat(
@@ -68,22 +59,23 @@ def _make_chat(
     try:
         return ChatOpenAI(
             **kwargs,
-            timeout=LLM_TIMEOUT_SEC,
-            max_retries=max(0, LLM_MAX_RETRIES),
+            timeout=_cfg.LLM_TIMEOUT_SEC,
+            max_retries=max(0, _cfg.LLM_MAX_RETRIES),
         )
     except TypeError:
         return ChatOpenAI(**kwargs)
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def get_chat_model(temperature: float = 0.0) -> Any:
-    """Primary OpenAI-compatible chat model from LLM_* env."""
+    """Primary OpenAI-compatible chat model from live LLM_* config."""
     if not is_llm_available():
         raise RuntimeError(llm_status_message())
+    # Cache key includes key fingerprint so hot-swap works after cache_clear
     return _make_chat(
-        api_key=LLM_API_KEY,
-        base_url=LLM_BASE_URL,
-        model=LLM_MODEL,
+        api_key=_cfg.LLM_API_KEY,
+        base_url=_cfg.LLM_BASE_URL,
+        model=_cfg.LLM_MODEL,
         temperature=temperature,
     )
 
@@ -100,24 +92,22 @@ def get_qwen(temperature: float = 0.0) -> Any:
 
 def is_classify_llm_available() -> bool:
     """Classify LLM: dedicated CLASSIFY_* or fallback to primary LLM_*."""
-    if CLASSIFY_API_KEY and CLASSIFY_BASE_URL and CLASSIFY_MODEL:
-        # If only Google key is set without OpenAI-compatible base, not usable here
-        if CLASSIFY_BASE_URL:
-            return True
+    if _cfg.CLASSIFY_API_KEY and _cfg.CLASSIFY_BASE_URL and _cfg.CLASSIFY_MODEL:
+        return True
     return is_llm_available()
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def get_classify_model(temperature: float = 0.0) -> Any:
     """Model for optional PDF classify (OpenAI-compatible).
 
     Prefer CLASSIFY_* if set; else primary LLM_*.
     """
-    if CLASSIFY_API_KEY and CLASSIFY_BASE_URL and CLASSIFY_MODEL:
+    if _cfg.CLASSIFY_API_KEY and _cfg.CLASSIFY_BASE_URL and _cfg.CLASSIFY_MODEL:
         return _make_chat(
-            api_key=CLASSIFY_API_KEY,
-            base_url=CLASSIFY_BASE_URL,
-            model=CLASSIFY_MODEL,
+            api_key=_cfg.CLASSIFY_API_KEY,
+            base_url=_cfg.CLASSIFY_BASE_URL,
+            model=_cfg.CLASSIFY_MODEL,
             temperature=temperature,
         )
     return get_chat_model(temperature=temperature)
@@ -160,7 +150,7 @@ def structured_invoke(
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    retries = LLM_MAX_RETRIES if max_retries is None else max_retries
+    retries = _cfg.LLM_MAX_RETRIES if max_retries is None else max_retries
     last_exc: Optional[BaseException] = None
     for attempt in range(retries + 1):
         try:
