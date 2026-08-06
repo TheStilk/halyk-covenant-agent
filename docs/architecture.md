@@ -14,23 +14,25 @@ load_ledger          # CSV → DataFrame, account_id → scenario_id
 classify_docs        # все PDF: extract + classify + bind to scenario
   │
   ▼
-extract_covenants    # loan agreements → Article 6 → 6.1 / 6.2 / 6.3
+extract_covenants    # loan → template covenant ids (fallback Article N)
   │
   ▼
 extract_metrics      # notes + KYC + ledger → ScenarioMetrics
   │
   ▼
-analyze_covenants    # formula engine (+ optional Qwen / reflection)
+analyze_covenants    # formula engine → unknown best-effort → optional Qwen
   │
   ▼
-collect_results      # answers dict → documents["submission_answers"]
+collect_results      # ensure_filled cells → documents["submission_answers"]
   │
   ▼
-END  → main.py пишет submission.json → validate
+END  → main.py: submission.json + BATTLE DIAGNOSTICS → validate
 ```
 
 Phase 1 (foundation) останавливается после `extract_covenants`.  
 Phase 2/3 — полный граф до `collect_results`.
+
+**Принцип:** deterministic first, LLM only fallback. Не переписывать formula engine ради LLM.
 
 ---
 
@@ -41,11 +43,12 @@ Phase 2/3 — полный граф до `collect_results`.
 | Поле | Смысл |
 |------|--------|
 | `ledger` | `pd.DataFrame` всего леджера |
-| `account_to_scenario` | `ACC-7801 → P1` (только submission-сценарии) |
+| `account_to_scenario` | `ACC-… → scenario` (submission-сценарии; не только ACC-7*) |
 | `scenario_ids` | ключи из `submission_template.json` |
-| `doc_index` | список классификаций всех PDF |
+| `doc_index` | список классификаций всех PDF (+ extract quality) |
 | `docs_by_scenario` | `scenario → {loan_agreement, financial_notes, kyc} → [paths]` |
 | `documents` | bag: covenants_by_scenario, metrics_by_scenario, submission_answers |
+| `diagnostics` | bad extracts, unknown formulas, low confidence, … |
 | `results` | `Annotated[list[FinalCovenantResult], operator.add]` |
 | `stage` / `error` | контроль |
 
@@ -66,13 +69,14 @@ Phase 2/3 — полный граф до `collect_results`.
 
 | Модуль | Роль |
 |--------|------|
-| `ledger.py` | mapping, transactions; `amount=None` при NaN в CSV |
-| `pdf_extract.py` | pdfplumber → pymupdf → pdftotext |
-| `pdf_cache.py` | diskcache по path+size+mtime |
-| `classifier.py` | rules (loan/notes/kyc/junk) + optional Gemini |
-| `covenants.py` | Article 6 → 6.1–6.3 |
-| `metrics.py` | KYC, AUP, cut-off, FX, NaN fills, Group Capex, one-time EBITDA |
-| `formula_engine.py` | детект формулы, actual/status/evidence |
+| `ledger.py` | mapping, transactions; prefer non-`ACC-9*` borrowers |
+| `pdf_extract.py` | quality-gated extract; pdfplumber → pymupdf → pdftotext |
+| `pdf_cache.py` | diskcache path+size+mtime+**extract quality version** |
+| `classifier.py` | rules + prefer mapped / non-noise account |
+| `covenants.py` | template ids → clause block; fallback Статья/Article N |
+| `metrics.py` | KYC, AUP, taxonomy, FX, NaN fills, Group Capex, Adj EBITDA |
+| `formula_engine.py` | known formulas + unknown best-effort |
+| `battle_diagnostics.py` | сводка cells / unknown / bad extracts / time |
 | `llm.py` | Qwen + Gemini factories |
 
 ### `agent/models.py` — схемы
@@ -80,7 +84,13 @@ Phase 2/3 — полный граф до `collect_results`.
 - `DocType`, `DocClassification`  
 - `CovenantVerdict` — structured output LLM  
 - `FinalCovenantResult` — ячейка submission  
+- `ensure_filled_cell` / `ensure_filled_answers` — **запрет null status/actual**  
 - `ExtractedDocument` — payload кэша PDF  
+
+### `agent/config.py`
+
+- `COVENANT_IDS` / `COVENANT_IDS_BY_SCENARIO` — из `submission_template.json`  
+- `covenant_ids_for_scenario(sc)` — per-scenario ids (private set может отличаться)  
 
 ### `agent/prompts/system.py`
 
@@ -95,8 +105,9 @@ Phase 2/3 — полный граф до `collect_results`.
 1. **KYC** — ownership threshold, related parties; OCR image-таблиц; unrestricted subsidiaries (pledge &lt; 50%).  
 2. **Notes / AUP** — final reclass only; cut-offs; missing ledger amounts; FX rates.  
 3. **EBITDA one-time table** (OCR «Корректировки EBITDA») — items + materiality threshold.  
-4. **Ledger** — taxonomy (`revenue`, `opex`, `capex`, `lease`, `interest`, `tax`, `utilities`, `financing`, `transfer`, …); NaN fill; FX convert.  
+4. **Ledger** — `classify_txn_category` (interest/overdraft/capitalised, rent/storage, insurance refunds, VAT/tax credits, utilities/sewer, marketing rebates; `other_*` ~0.6%); NaN fill; FX.  
 5. **Aggregates** — revenue, ebitda, adjusted_ebitda, capex, RP, financing, group_capex, …  
+   Expense buckets считают только **outflows** (`amount < 0`); inflows-refunds в family не ломают open-set totals. 
 
 ### Adjusted EBITDA
 
@@ -136,7 +147,7 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 
 ## Formula engine
 
-`detect_formula_id(covenant_text)` → handler:
+`detect_formula_id(covenant_text)` → handler (known open-set ids **не трогать** без eval):
 
 | formula_id | actual |
 |------------|--------|
@@ -158,11 +169,16 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 | `financing_to_ebitda` | Financing / EBITDA (springing) |
 | `q4_revenue` | revenue in Q4 |
 
-**Status (max ratio):** raw vs thr; если round(raw,2)==thr, но raw чуть выше — COMPLIANT при relative overshoot ≤ 5% (presentation band).  
+**Unknown formula** (`detect_formula_id` → `unknown`):
 
+1. Soft keyword remap (RP / revenue / capex) с low conf  
+2. Иначе `_best_effort_unknown` — shape thr (min/max × money/ratio) + metrics  
+3. **Никогда** silent `BREACH + actual=0.0` без попытки метрики  
+4. conf ≈ 0.28 → LLM refine при наличии ключа  
+
+**Status (max ratio):** raw vs thr; presentation band relative overshoot ≤ 5%.  
 **actual:** `round(abs(x), 2)`.  
-
-**evidence_txn_id:** единственная txn, без которой status меняется (reclass-кандидаты первыми).
+**evidence_txn_id:** txn, без которой status меняется.
 
 ---
 
@@ -170,11 +186,30 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 
 `analyze_one_covenant`:
 
-1. Детерминированный `evaluate_covenant`  
-2. При `QWEN_API_KEY` и low confidence → Qwen structured output  
-3. Reflection при confidence &lt; threshold  
+1. `evaluate_covenant` (known high-conf **без** LLM)  
+2. Unknown / low conf **и** `QWEN_API_KEY` → Qwen structured  
+3. Reflection если conf всё ещё &lt; `CONFIDENCE_THRESHOLD`  
+4. Без ключа — det best-effort, ячейка всё равно заполнена  
 
-На open set достаточно formula engine (100% без ключей).
+Open set: 100% на formula engine без ключей.
+
+---
+
+## PDF extract quality
+
+`assess_extract_quality(text)` вместо `len(text) ≥ 40`:
+
+- meaningful length, доля кириллицы, маркеры ACC/TXN/$/Статья|Article, alnum density  
+- backend: pdfplumber → pymupdf → pdftotext; первый `ok` принимается  
+- все плохие → best score + `method=…+degraded` + WARNING (в `diagnostics.bad_extracts`)  
+
+---
+
+## Covenant extraction (template-driven)
+
+1. Clause headers по ids из template (`Пункт 6.1`, `Clause 7.2`, …)  
+2. Fallback: `Статья N` / `Article N` (N = major number ids)  
+3. Split только на ids из template (не хардкод 6.1/6.2/6.3)
 
 ---
 
@@ -182,23 +217,48 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 
 | Тип | Сигналы |
 |-----|---------|
-| `loan_agreement` | ДОГОВОР БАНКОВСКОГО ЗАЙМА, Статья 6 |
+| `loan_agreement` | ДОГОВОР БАНКОВСКОГО ЗАЙМА, Статья N |
 | `financial_notes` | Примечания, AUP, Consolidated FS, PPE rollforward |
 | `kyc` | Досье KYC, НАДЛЕЖАЩАЯ ПРОВЕРКА |
 | `junk` | пресс-релизы, АХО, superseded loan, internal procedures |
+
+Account: `prefer_borrower_account` — mapping ledger → non-noise (`ACC-9*`) → first.  
+Company: JSC / LLC / LLP / ТОО / АО / …  
 
 ---
 
 ## Кэширование
 
-`get_file_key = md5(resolve:size:mtime_ns)` → `doc_cache/`.
+`get_file_key = md5(resolve:size:mtime_ns:eq=<EXTRACT_QUALITY_VERSION>)` → `doc_cache/`.  
+Смена quality-логики инвалидирует кэш автоматически.
+
+---
+
+## Battle diagnostics
+
+В конце `main.py phase3`:
+
+```text
+=== BATTLE DIAGNOSTICS ===
+cells filled: 36/36
+unknown formulas: …
+low confidence: …
+bad extracts: …
+missing amounts: …
+scenarios without loan: …
+scenarios without notes: …
+time total: …
+```
+
+Реализация: `agent/tools/battle_diagnostics.py`.
 
 ---
 
 ## Расширение
 
-1. Новый тип ковенанта → handler + `detect_formula_id`.  
-2. Новая категория ledger → `classify_txn_category`.  
-3. Новый source метрики → `metrics.py` + поле `ScenarioMetrics`.  
+1. Новый тип ковенанта → handler + `detect_formula_id` (не ломать open-set 36/36).  
+2. Новая категория ledger → `classify_txn_category` (не ломать revenue/capex/rp/tax/utilities).  
+3. Новый source метрики → `metrics.py` + `ScenarioMetrics`.  
+4. LLM Formula Reader (planned) — LLM читает формулировку → code считает; det engine остаётся backup.
 
-Не ломать: mapping account→scenario, схему `answers`, actual &gt; 0 с 2 знаками.
+Не ломать: mapping account→scenario, схему `answers`, never-null cells, actual ≥ 0 с 2 знаками.

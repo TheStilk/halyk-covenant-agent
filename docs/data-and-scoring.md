@@ -23,10 +23,27 @@ agentic-bank-public/
 `txn_id, date, account_id, counterparty, description, amount, currency`
 
 - Расходы **отрицательные**, поступления **положительные**.  
-- Категории **нет** — классификация по `description` / reclass AUP.  
+- Категории **нет** — `classify_txn_category(description, amount)` + reclass AUP.  
 - `actual` всегда **модуль** (положительный).  
 - `amount` может быть **NaN** — fill из notes/treasury.  
 - Non-USD → конвертация по курсу из notes при наличии.
+
+### Taxonomy (ledger)
+
+| Категория | Примеры description |
+|-----------|---------------------|
+| `revenue` | sales settlement, capacity, stevedoring |
+| `interest` | loan interest, **overdraft**, **capitalised interest**, true-up, interest income/rebate |
+| `lease` | land/warehouse lease, **storage unit rent**, rent free, lease deposit/incentive |
+| `insurance` | premium, broker rebate, experience refund, claim reimbursement |
+| `tax` | tax, excise, **VAT refund/reclaim**, tax credit |
+| `utilities` | electric, water/sewer levy, overbilling refund |
+| `marketing` | media buy, volume rebate, unused ad budget |
+| `payroll` | salary, wage, overfunding returned |
+| `capex` / `opex` / `financing` / `transfer` | purchase of equipment, operating cost, drawdown, transfer of assets |
+| `other_*` | остаток ~**0.6%** rows (было ~28%); one-time works (flood/berth silt) остаются other для Adj EBITDA |
+
+Expense aggregates суммируют только **outflows**; inflows в family (refunds) не ломают open-set totals.
 
 ### account_id → scenario_id
 
@@ -39,7 +56,9 @@ agentic-bank-public/
 
 `scenario = txn_id.split("-")[1]` → `build_account_to_scenario()`.
 
-**P1–P10, B1, B4** → **12 × 3 = 36 ячеек**.
+Borrower pick: **не** хардкод `ACC-7*` — prefer non-noise (`ACC-9*` = open-set noise) / mapping.
+
+**Open set:** P1–P10, B1, B4 → **12 × 3 = 36 ячеек** (ids из `submission_template.json`).
 
 ---
 
@@ -47,16 +66,20 @@ agentic-bank-public/
 
 | Тип | Использование |
 |-----|----------------|
-| Loan agreement | текст 6.1–6.3, пороги, формулы |
+| Loan agreement | тексты ковенантов (template ids), пороги, формулы |
 | Financial notes / AUP | reclass, cut-off, missing amounts, FX, EBITDA add-backs |
 | Consolidated FS | **Group Capex** (PPE rollforward) |
 | KYC | related parties, unrestricted subsidiaries |
 | Treasury memo | NaN fills (налоги, payroll) |
-| Junk | игнор (в т.ч. superseded loan, draft AUP) |
+| Junk | игнор (в т.ч. superseded loan, draft AUP); bad extract flagged |
+
+Все **PDF** в `documents/` прогоняются (quality + classify); CSV/TXT в папке PDF-пайплайн не читает.
 
 ---
 
 ## Ковенанты
+
+Ids **из template** (per scenario), не хардкод. Open set = 6.1 / 6.2 / 6.3.
 
 Формулировки **разные** у заёмщиков. Примеры open set:
 
@@ -131,7 +154,8 @@ OCR для image-таблиц; поддержка `"Name" LLP`, `L.L.P.`.
 
 ## Формат submission
 
-Нельзя менять ключи шаблона — только заполнять поля ячеек.
+Нельзя менять ключи шаблона — только заполнять поля ячеек.  
+`status` / `actual` **не могут быть null** (pipeline sanitize + validate hard-fail).
 
 ```json
 {

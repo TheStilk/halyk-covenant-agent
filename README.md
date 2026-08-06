@@ -12,7 +12,11 @@
 
 **Open set (финал):** hackathon score **100%** (36/36), status **100%**, evidence **100%** (9/9 non-null).
 
+**Команда:** «Сычуанский Соус» · `serkebaevmadiyar09@gmail.com`, `zhenis415@gmail.com`
+
 **Репозиторий:** https://github.com/TheStilk/halyk-covenant-agent
+
+**Архитектура:** hybrid — **deterministic first**, LLM только как fallback (unknown formula / low confidence). Open-set score держится без API-ключей.
 
 ---
 
@@ -21,9 +25,9 @@
 | Документ | О чём |
 |----------|--------|
 | [README.md](README.md) (этот файл) | Быстрый старт, обзор, команды |
-| [docs/architecture.md](docs/architecture.md) | Пайплайн, модули, State, формулы |
-| [docs/usage.md](docs/usage.md) | CLI, env, прогоны, validate, отладка |
-| [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, маппинг, оценка хакатона |
+| [docs/architecture.md](docs/architecture.md) | Пайплайн, hardening, formulas, diagnostics |
+| [docs/usage.md](docs/usage.md) | CLI, env, battle diagnostics, validate |
+| [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, taxonomy, scoring |
 | [PLAN.md](PLAN.md) | Master Plan (единственный source of truth по ТЗ) |
 
 ---
@@ -65,29 +69,30 @@ PDF (opaque hashes) + master_ledger_2025.csv
   classify PDF → loan | notes | kyc | junk
         │
         ▼
-  Article 6 → тексты 6.1 / 6.2 / 6.3
+  template covenant ids → clause texts (fallback Article N)
         │
         ▼
   metrics: Revenue, EBITDA, Capex, RP, Group Capex,
            reclass, cut-off, FX, NaN fills, one-time add-backs…
         │
         ▼
-  formula engine (+ optional Qwen) → status / actual / evidence
+  formula engine (known) → unknown best-effort → optional Qwen
         │
         ▼
-  submission.json  →  main.py validate
+  ensure no null cells → submission.json → battle diagnostics → validate
 ```
 
 Ключевые технические приёмы:
 
-- **Кэш PDF** (`diskcache`) — повторные прогоны быстрые  
-- **Final AUP only** — промежуточные «ПРОЕКТ»-ведомости игнорируются  
-- **Group Capex** — PPE rollforward из consolidated FS материнской группы  
-- **Adjusted EBITDA** — one-time items + порог существенности (OCR notes)  
-- **NaN ledger fills** — суммы «не в выгрузке» из notes/treasury  
-- **FX** — EUR→USD по курсу из notes  
-- **KYC OCR** — related parties / unrestricted subsidiaries  
-- **evidence** — транзакция, без которой вердикт меняется  
+- **Hybrid** — formula engine first; LLM только unknown / low-conf  
+- **Never-null cells** — `status`/`actual` всегда заполнены (best-effort)  
+- **Extract quality guards** — кириллица, ACC/TXN/$/Статья; fallback backend  
+- **Template-driven** — `COVENANT_IDS` из `submission_template.json`  
+- **Taxonomy** — `other_*` ~0.6% (interest/rent/VAT/insurance/…)  
+- **Battle diagnostics** — cells / unknown / bad extracts / time в конце `phase3`  
+- **Кэш PDF** (`diskcache`, versioned) — повторные прогоны быстрые  
+- **Final AUP only** — «ПРОЕКТ»-ведомости игнорируются  
+- **Group Capex / Adj EBITDA / NaN fills / FX / KYC OCR / evidence**  
 
 ---
 
@@ -190,11 +195,21 @@ Open set: **36.0 / 36.0 (100%)**.
 
 ```bash
 export DATA_DIR=/path/to/private-dataset
-rm -rf doc_cache          # чистый кэш на новых PDF
+# optional: QWEN_API_KEY for unknown-formula LLM fallback
+rm -rf doc_cache          # чистый кэш на новых PDF (cache key includes extract quality version)
 uv run python main.py phase3
+# смотреть === BATTLE DIAGNOSTICS ===
 uv run python main.py validate
 # сдать submission.json
 ```
+
+На private set важно:
+
+1. **Не null** в `status`/`actual` (pipeline + validate).  
+2. Covenant ids / Article N — из **template**, не хардкод 6.1–6.3.  
+3. Account не только `ACC-7*` (noise = `ACC-9*`).  
+4. Unknown formula → best-effort metrics; с ключом — Qwen structured.  
+5. Читать battle diagnostics: bad extracts, missing loan/notes, time.
 
 ---
 
