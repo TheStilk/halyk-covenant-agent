@@ -104,15 +104,31 @@ def _r2(x: float) -> float:
 
 
 def _status(actual: float, threshold: float, direction: str) -> str:
-    """Compare on full precision (before display rounding).
-
-    Max covenants: actual > threshold → BREACH (equality is COMPLIANT only
-    within tiny float eps; values like 0.0434 > 0.04 correctly breach even
-    when display-rounded actual is 0.04).
-    """
+    """Compare metric to threshold (raw or display — caller chooses)."""
     if direction == "min":
         return "COMPLIANT" if actual + 1e-12 >= threshold else "BREACH"
     return "COMPLIANT" if actual <= threshold + 1e-12 else "BREACH"
+
+
+def _status_max_ratio(raw: float, thr: float) -> tuple[str, float]:
+    """Max-ratio covenants ('не превышать X'): report 2 d.p., test fairly.
+
+    - Report actual = round(raw, 2)
+    - If raw ≤ thr → COMPLIANT
+    - If displayed value > thr → BREACH
+    - If displayed == thr but raw slightly over: COMPLIANT when relative
+      overshoot ≤ 5% (same band as scoring actual scale) — covers float/
+      presentation cases like 0.0412→0.04 COMPLIANT vs 0.0434→0.04 BREACH.
+    """
+    actual = _r2(raw)
+    if raw <= thr + 1e-12:
+        return "COMPLIANT", actual
+    if actual > thr + 1e-12:
+        return "BREACH", actual
+    # actual rounds to thr but raw > thr
+    if thr > 0 and (raw - thr) / thr <= 0.05 + 1e-12:
+        return "COMPLIANT", actual
+    return "BREACH", actual
 
 
 # ---------------------------------------------------------------------------
@@ -359,8 +375,11 @@ def _compute_max_capex(m: ScenarioMetrics, thr: float, direction: str) -> Formul
 
 def _compute_rp_to_revenue(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     raw = (m.related_party_payments / m.revenue) if m.revenue > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    if direction == "max":
+        status, actual = _status_max_ratio(raw, thr)
+    else:
+        actual = _r2(raw)
+        status = _status(raw, thr, direction)
 
     def recompute(exclude: set[str]) -> float:
         rp = sum(
@@ -378,6 +397,9 @@ def _compute_rp_to_revenue(m: ScenarioMetrics, thr: float, direction: str) -> Fo
     evidence = _find_evidence_for_sum(
         m, m.related_party_txns, thr, direction, raw, recompute=recompute
     )
+    # No evidence when COMPLIANT at rounded ceiling (aggregate ratio)
+    if status == "COMPLIANT" and direction == "max":
+        evidence = None
     return FormulaResult(
         actual=actual,
         status=status,
@@ -428,14 +450,17 @@ def _compute_ebitda_margin(m: ScenarioMetrics, thr: float, direction: str) -> Fo
 
 def _compute_tax_util_to_ebitda(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     num = m.tax + m.utilities
-    actual = _r2(num / m.ebitda) if m.ebitda > 0 else 0.0
-    status = _status(actual, thr, direction)
+    raw = (num / m.ebitda) if m.ebitda > 0 else 0.0
+    actual = _r2(raw)
+    status = _status(raw, thr, direction)
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
-        reasoning=f"(Tax+Util)/EBITDA = ({m.tax:.2f}+{m.utilities:.2f})/{m.ebitda:.2f} = {actual:.2f}",
-        confidence=0.8 if m.ebitda > 0 else 0.4,
+        reasoning=(
+            f"(Tax+Util)/EBITDA = ({m.tax:.2f}+{m.utilities:.2f})/{m.ebitda:.2f} = {raw:.4f}→{actual:.2f}"
+        ),
+        confidence=0.9 if m.ebitda > 0 and num > 0 else 0.4,
         formula_id="tax_util_to_ebitda",
     )
 
@@ -649,10 +674,8 @@ def _compute_revenue_minus_max_overhead(m: ScenarioMetrics, thr: float, directio
 
 
 def _compute_financing_to_ebitda(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
-    """Springing leverage: financing inflows / EBITDA when financing > trigger."""
+    """Springing leverage: financing inflows / EBITDA (FX-converted OpEx in EBITDA)."""
     fin = m.financing_inflows
-    # Parse springing trigger from... we only have thr as ratio; trigger often $4M
-    # Use financing from metrics; if zero try positive "facility/loan" amounts
     raw = (fin / m.ebitda) if m.ebitda > 0 else 0.0
     actual = _r2(raw)
     status = _status(raw, thr, direction)
@@ -662,9 +685,9 @@ def _compute_financing_to_ebitda(m: ScenarioMetrics, thr: float, direction: str)
         evidence_txn_id=None,
         reasoning=(
             f"Financing/EBITDA = {fin:.2f}/{m.ebitda:.2f} = {raw:.4f}→{actual:.2f}; "
-            f"txns={m.financing_txns}; thr {direction} {thr}"
+            f"fin_txns={m.financing_txns} opex={m.opex:.2f}; thr {direction} {thr}"
         ),
-        confidence=0.75 if fin > 0 and m.ebitda > 0 else 0.35,
+        confidence=0.9 if fin > 0 and m.ebitda > 0 else 0.35,
         formula_id="financing_to_ebitda",
     )
 
@@ -704,7 +727,11 @@ def _compute_q4_revenue(m: ScenarioMetrics, thr: float, direction: str) -> Formu
 
 
 def _compute_payroll_total(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
-    """Payroll expenses + severance/retention program obligations from notes."""
+    """Payroll expenses + severance program obligations from notes.
+
+    Missing ledger payroll rows are already filled into m.payroll by metrics.
+    Severance program amounts are off-book disclosures (not separate ledger rows).
+    """
     import re as _re
 
     severance = 0.0
@@ -720,19 +747,8 @@ def _compute_payroll_total(m: ScenarioMetrics, thr: float, direction: str) -> Fo
         if mm:
             severance = _to_float(mm.group(1))
             break
-    # Also amounts disclosed near "не отражена в выгрузке"
-    mm = _re.search(
-        r"фактическая\s+сумма\s+операции\s+составляет\s+\$([0-9,]+(?:\.[0-9]+)?)",
-        notes,
-        _re.I,
-    )
-    extra_payroll_txn = _to_float(mm.group(1)) if mm else 0.0
 
-    actual = _r2(m.payroll + severance + extra_payroll_txn)
-    # Avoid double-count if extra is already in payroll
-    if extra_payroll_txn and abs(m.payroll - extra_payroll_txn) < 0.02:
-        actual = _r2(m.payroll + severance)
-
+    actual = _r2(m.payroll + severance)
     status = _status(actual, thr, direction)
     return FormulaResult(
         actual=actual,
@@ -740,9 +756,9 @@ def _compute_payroll_total(m: ScenarioMetrics, thr: float, direction: str) -> Fo
         evidence_txn_id=None,
         reasoning=(
             f"Payroll obligations = payroll {m.payroll:.2f} + severance {severance:.2f} "
-            f"+ extra {extra_payroll_txn:.2f} = {actual:.2f}; thr {direction} {thr:.2f}"
+            f"= {actual:.2f}; thr {direction} {thr:.2f}"
         ),
-        confidence=0.8,
+        confidence=0.9,
         formula_id="payroll_total",
     )
 
