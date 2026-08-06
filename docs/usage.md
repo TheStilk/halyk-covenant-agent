@@ -56,7 +56,21 @@ uv run python main.py phase3
 uv run python main.py validate
 ```
 
-`phase3` / `phase2` пишут `submission.json` в корень:
+`phase3` / `phase2` пишут `submission.json` и печатают **battle diagnostics**:
+
+```text
+=== BATTLE DIAGNOSTICS ===
+cells filled: 36/36
+unknown formulas: 0
+low confidence: 1 [B4/6.1 conf=0.70]
+bad extracts: 1 [f3fa6d20c8a1.pdf]
+missing amounts: 2 [P7:1, P8:1 (txns=2)]
+scenarios without loan: —
+scenarios without notes: —
+time total: ~100s
+```
+
+`submission.json` в корне:
 
 ```json
 {
@@ -89,7 +103,9 @@ uv run python scripts/validate_submission.py
 4. `status` ∈ `{COMPLIANT, BREACH}`  
 5. `actual` — число ≥ 0, не больше 2 знаков после запятой  
 6. `evidence_txn_id` — string или null  
-7. Нет null в `status` / `actual`  
+7. **Hard-fail** на null/missing `status` / `actual` (и NaN)  
+
+Pipeline **никогда** не оставляет пустые ячейки: `ensure_filled_cell` → best-effort `BREACH`/`0.0` при нехватке данных.
 
 Вывод:
 
@@ -102,7 +118,7 @@ uv run python scripts/validate_submission.py
 uv run python main.py foundation
 ```
 
-Только ledger + classify + Article 6 (12/12 сценариев с 6.1–6.3).
+Только ledger + classify + covenants (12/12 сценариев с полным набором template clause ids).
 
 ### Утилиты
 
@@ -120,7 +136,7 @@ uv run python main.py extract-covenants agentic-bank-public/documents/1d262694c3
 |--------|------------|
 | `scripts/smoke_phase1.py` | Регрессия Phase 1 без LLM |
 | `scripts/run_one_scenario.py` | 1+ сценариев vs ground_truth |
-| `scripts/eval_phase2.py` | Полный score 36 ячеек + WORST CELLS |
+| `scripts/eval_phase2.py` | Полный score 36 ячеек + WORST CELLS; `--scenarios` subset |
 | `scripts/validate_submission.py` | Формат submission |
 
 ```bash
@@ -128,7 +144,7 @@ uv run python scripts/smoke_phase1.py
 uv run python scripts/run_one_scenario.py           # default P1 P5
 uv run python scripts/run_one_scenario.py P4
 uv run python scripts/eval_phase2.py
-uv run python scripts/eval_phase2.py --scenarios P5 B1
+uv run python scripts/eval_phase2.py --scenarios P5 B1   # holdout-style subset
 uv run python scripts/validate_submission.py --submission ./submission.json
 ```
 
@@ -156,21 +172,30 @@ uv run python scripts/eval_phase2.py --scenarios P4
 
 ```bash
 export DATA_DIR=/path/to/private-dataset
+# optional: export QWEN_API_KEY=...   # unknown-formula LLM fallback
 rm -rf doc_cache
 uv run python main.py phase3
+# прочитать === BATTLE DIAGNOSTICS ===
 uv run python main.py validate
 # сдать submission.json
 ```
+
+Чеклист боя:
+
+1. `cells filled` = expected (template × scenarios)  
+2. `unknown formulas` / `low confidence` — кандидаты на LLM  
+3. `bad extracts` / `scenarios without loan|notes` — риск  
+4. `validate` exit 0  
 
 ---
 
 ## Кэш документов
 
 - Каталог: `DOC_CACHE_DIR` (default `./doc_cache`).  
-- Ключ: `md5(abs_path:size:mtime_ns)`.  
+- Ключ: `md5(abs_path:size:mtime_ns:eq=<EXTRACT_QUALITY_VERSION>)`.  
 
 ```bash
-rm -rf doc_cache   # после смены extractors или датасета
+rm -rf doc_cache   # после смены extractors, quality version или датасета
 ```
 
 ---
@@ -179,14 +204,18 @@ rm -rf doc_cache   # после смены extractors или датасета
 
 | Симптом | Что проверить |
 |---------|----------------|
+| null status/actual | `ensure_filled_*`, collect_results, validate |
+| degraded extract | `assess_extract_quality`, backends, `diagnostics.bad_extracts` |
 | 0 related-party | KYC OCR, threshold, `L.L.P.` / quotes |
 | Group Capex = borrower only | consolidated FS, segment name = company |
 | Adj EBITDA margin off | OCR «Корректировки EBITDA», порог $300k |
 | Reclass не применился | final AUP vs draft intermediate |
-| NaN amount в ledger | notes/treasury «не отражена в выгрузке» |
+| NaN amount в ledger | notes/treasury; battle `missing amounts` |
 | EUR в EBITDA | курс в notes (EUR … $USD) |
 | evidence ≠ GT | reclass txn order в `_find_evidence_for_sum` |
-| Медленный eval | OCR на каждом KYC (~1–2 мин на 12 сценариев) |
+| high other_* share | `classify_txn_category` patterns |
+| unknown formula BREACH/0 | should not happen silent — `_best_effort_unknown` |
+| Медленный eval | OCR KYC (~1–2 мин на 12 сценариев); cold cache rebuild |
 
 ---
 
