@@ -1,0 +1,84 @@
+"""Disk-backed PDF extraction cache (Master Plan §5.1)."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from diskcache import Cache
+
+from agent.config import DOC_CACHE_DIR
+from agent.models import ExtractedDocument
+
+_doc_cache: Optional[Cache] = None
+
+
+def get_cache(directory: str | Path | None = None) -> Cache:
+    global _doc_cache
+    if _doc_cache is None or directory is not None:
+        path = Path(directory) if directory else DOC_CACHE_DIR
+        path.mkdir(parents=True, exist_ok=True)
+        _doc_cache = Cache(str(path))
+    return _doc_cache
+
+
+def get_file_key(file_path: str | Path) -> str:
+    """Stable content-identity key: resolved path + size + mtime_ns."""
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    stat = path.stat()
+    raw = f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def read_pdf_with_cache(
+    file_path: str | Path,
+    extract_fn: Optional[Callable[[str], dict[str, Any]]] = None,
+    *,
+    force: bool = False,
+    cache: Optional[Cache] = None,
+) -> ExtractedDocument:
+    """Read a PDF, using diskcache when available.
+
+    extract_fn must return a dict compatible with ExtractedDocument fields
+    (path, text, page_count, method, tables, meta). If omitted, the default
+    extractor from agent.tools.pdf_extract is used.
+    """
+    file_path = Path(file_path)
+    key = get_file_key(file_path)
+    cache = cache or get_cache()
+
+    if not force and key in cache:
+        payload = cache[key]
+        if isinstance(payload, ExtractedDocument):
+            return payload
+        if isinstance(payload, dict):
+            return ExtractedDocument(**payload)
+        # Unexpected type — re-extract
+        print(f"[pdf_cache] unexpected cached type for {file_path.name}: {type(payload)}")
+
+    if extract_fn is None:
+        from agent.tools.pdf_extract import extract_pdf
+
+        extract_fn = extract_pdf
+
+    result = extract_fn(str(file_path))
+    if isinstance(result, ExtractedDocument):
+        doc = result
+    else:
+        result.setdefault("path", str(file_path))
+        doc = ExtractedDocument(**result)
+
+    # Store as plain dict for diskcache robustness across reloads
+    cache[key] = doc.model_dump()
+    return doc
+
+
+def clear_cache(directory: str | Path | None = None) -> int:
+    """Clear the document cache. Returns number of items removed."""
+    cache = get_cache(directory)
+    n = len(cache)
+    cache.clear()
+    return n
