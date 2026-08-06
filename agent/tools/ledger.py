@@ -103,7 +103,8 @@ def transactions_for_account(ledger: pd.DataFrame, account_id: str) -> list[dict
                 "account_id": str(row["account_id"]),
                 "counterparty": str(row["counterparty"]) if pd.notna(row["counterparty"]) else "",
                 "description": str(row["description"]) if pd.notna(row["description"]) else "",
-                "amount": float(row["amount"]) if pd.notna(row["amount"]) else 0.0,
+                # None when CSV amount is blank/NaN — metrics may fill from notes/treasury
+                "amount": float(row["amount"]) if pd.notna(row["amount"]) else None,
                 "currency": str(row["currency"]) if pd.notna(row["currency"]) else "USD",
             }
         )

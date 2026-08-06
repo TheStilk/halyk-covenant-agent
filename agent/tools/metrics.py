@@ -277,7 +277,18 @@ def classify_txn_category(description: str, amount: float) -> str:
         return "capex"
     if re.search(r"\bequipment\b", d) and "lease" not in d and "interest" not in d and "transfer" not in d:
         return "capex"
-    if any(k in d for k in ("operating cost", "operating and maintenance", "servicing and operating", "plant operating")):
+    if any(
+        k in d
+        for k in (
+            "operating cost",
+            "operating and maintenance",
+            "servicing and operating",
+            "plant operating",
+            "servicing contract",
+            "catalyst regeneration",
+            "regeneration servicing",
+        )
+    ):
         return "opex"
     if "maintenance expense" in d or "operating expenses" in d:
         return "opex"
@@ -297,7 +308,20 @@ def classify_txn_category(description: str, amount: float) -> str:
         )
     ):
         return "interest"
-    if any(k in d for k in ("tax", "excise", "duty", "withholding", "franchise tax")):
+    if any(
+        k in d
+        for k in (
+            "tax",
+            "excise",
+            "duty",
+            "withholding",
+            "franchise tax",
+            "mineral extraction",
+            "emissions tax",
+            "use tax",
+            "vat instalment",
+        )
+    ):
         return "tax"
     if any(k in d for k in ("insurance", "premium", "workers comp")):
         return "insurance"
@@ -656,9 +680,58 @@ _ADD_BACK_RE = re.compile(
     re.I,
 )
 
+# Missing ledger amounts: "TXN-… сумма не отражена … фактическая сумма … $X"
+_MISSING_AMOUNT_RE = re.compile(
+    r"Операция\s+(TXN-[A-Z0-9]+-\d+)\s*\([^)]*\)\s*:\s*сумма\s+не\s+отражена"
+    r".{0,80}?фактическая\s+сумма\s+операции\s+составляет\s+\$([0-9,]+(?:\.[0-9]+)?)",
+    re.I | re.S,
+)
+_MISSING_AMOUNT_RE2 = re.compile(
+    r"(TXN-[A-Z0-9]+-\d+).{0,120}?не\s+отражена\s+в\s+выгрузке"
+    r".{0,80}?\$([0-9,]+(?:\.[0-9]+)?)",
+    re.I | re.S,
+)
+
+# FX: "72,146.75 EUR … $83,690.23"
+_FX_PAIR_RE = re.compile(
+    r"([0-9][0-9\s,]*(?:\.[0-9]+)?)\s*(EUR|USD|KZT|GBP)\s*"
+    r".{0,80}?"
+    r"\$\s*([0-9,]+(?:\.[0-9]+)?)",
+    re.I | re.S,
+)
+_FX_PAIR_RE2 = re.compile(
+    r"([0-9][0-9\s,]*(?:\.[0-9]+)?)\s*(EUR|USD|KZT|GBP)"
+    r".{0,40}?урегулирован\s+платежом\s+в\s+долларах\s+США\s+в\s+размере\s+\$([0-9,]+(?:\.[0-9]+)?)",
+    re.I | re.S,
+)
+
 
 def _parse_money(s: str) -> float:
     return float(s.replace(",", "").replace(" ", ""))
+
+
+def parse_missing_ledger_amounts(text: str) -> dict[str, float]:
+    """TXN amounts missing from CSV export but disclosed in notes/treasury memos."""
+    out: dict[str, float] = {}
+    for pat in (_MISSING_AMOUNT_RE, _MISSING_AMOUNT_RE2):
+        for m in pat.finditer(text):
+            txn_id = m.group(1)
+            amt = abs(_parse_money(m.group(2)))
+            out[txn_id] = amt
+    return out
+
+
+def parse_fx_rates(text: str) -> dict[str, float]:
+    """Map currency → USD per 1 unit from auditor FX disclosures."""
+    rates: dict[str, float] = {}
+    for pat in (_FX_PAIR_RE2, _FX_PAIR_RE):
+        for m in pat.finditer(text):
+            foreign_amt = _parse_money(m.group(1))
+            ccy = m.group(2).upper()
+            usd_amt = _parse_money(m.group(3))
+            if foreign_amt > 0 and ccy != "USD":
+                rates[ccy] = usd_amt / foreign_amt
+    return rates
 
 
 def parse_notes_and_aup(text: str, source_path: str = "") -> tuple[list[Reclassification], list[CutoffAdjustment], float]:
@@ -827,6 +900,8 @@ def extract_scenario_metrics(
 
     # --- Notes + AUP + Group Capex from consolidated parent FS ---
     notes_parts: list[str] = []
+    missing_amounts: dict[str, float] = {}
+    fx_rates: dict[str, float] = {}
     all_doc_paths = list(dict.fromkeys([*notes_paths, *aup_paths]))
     for path in all_doc_paths:
         try:
@@ -839,10 +914,25 @@ def extract_scenario_metrics(
         metrics.reclassifications.extend(reclasses)
         metrics.cutoffs.extend(cutoffs)
         metrics.add_backs += add_backs
+        missing_amounts.update(parse_missing_ledger_amounts(text))
+        for ccy, rate in parse_fx_rates(text).items():
+            fx_rates[ccy] = rate
         gc = parse_group_capex_from_text(text)
         if gc and gc > metrics.group_capex:
             metrics.group_capex = gc
     metrics.notes_text = "\n\n".join(notes_parts)
+
+    # Treasury / internal memos often hold NaN ledger amounts (scan by account_id)
+    for path, text in _iter_docs_mentioning_account(account_id):
+        missing_amounts.update(parse_missing_ledger_amounts(text))
+        for ccy, rate in parse_fx_rates(text).items():
+            fx_rates.setdefault(ccy, rate)
+        if path not in all_doc_paths:
+            notes_parts.append(text)
+    if missing_amounts:
+        print(f"[metrics] {scenario_id} missing ledger fills: {missing_amounts}")
+    if fx_rates:
+        print(f"[metrics] {scenario_id} FX rates USD-per-unit: {fx_rates}")
 
     # Scan corpus for consolidated FS mentioning this borrower (Group Capex)
     if metrics.group_capex <= 0 and metrics.company_name:
@@ -864,7 +954,21 @@ def extract_scenario_metrics(
     for raw in transactions:
         txn_id = str(raw["txn_id"])
         desc = str(raw.get("description") or "")
-        amount = float(raw.get("amount") or 0.0)
+        amount_raw = raw.get("amount")
+        # Fill NaN / missing from notes/treasury disclosures
+        if amount_raw is None or (isinstance(amount_raw, float) and amount_raw != amount_raw):
+            if txn_id in missing_amounts:
+                # Expenses not in export are outflows
+                amount = -abs(missing_amounts[txn_id])
+            else:
+                amount = 0.0
+        else:
+            amount = float(amount_raw)
+        # Convert non-USD using auditor-disclosed rate
+        ccy = str(raw.get("currency") or "USD").upper()
+        if ccy != "USD" and ccy in fx_rates and amount != 0.0:
+            amount = amount * fx_rates[ccy]
+            ccy = "USD"
         cp = str(raw.get("counterparty") or "")
         cat = classify_txn_category(desc, amount)
 
@@ -901,7 +1005,7 @@ def extract_scenario_metrics(
                 counterparty=cp,
                 description=desc,
                 amount=amount,
-                currency=str(raw.get("currency") or "USD"),
+                currency=ccy,
                 category=cat,
                 is_related_party=related,
                 excluded=excluded,
@@ -1016,6 +1120,23 @@ def extract_scenario_metrics(
         "unrestricted_subs": [s.name for s in metrics.unrestricted_subsidiaries if s.is_unrestricted],
     }
     return metrics
+
+
+def _iter_docs_mentioning_account(account_id: str):
+    """Yield (path, text) for PDFs that mention this account (treasury memos etc.)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "agentic-bank-public" / "documents"
+    if not root.exists() or not account_id:
+        return
+    needle = account_id.replace("ACC-", "")
+    for pdf in root.glob("*.pdf"):
+        try:
+            text = read_pdf_with_cache(pdf).text
+        except Exception:  # noqa: BLE001
+            continue
+        if account_id in text or f"ACC-{needle}" in text or f"АСС-{needle}" in text:
+            yield str(pdf), text
 
 
 def _find_group_capex_for_company(company_name: str, scenario_id: str) -> Optional[float]:
