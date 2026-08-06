@@ -435,16 +435,31 @@ def _compute_rp_to_opex(m: ScenarioMetrics, thr: float, direction: str) -> Formu
 
 
 def _compute_ebitda_margin(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
-    ebitda = m.adjusted_ebitda if m.add_backs else m.ebitda
-    actual = _r2(ebitda / m.revenue) if m.revenue > 0 else 0.0
-    status = _status(actual, thr, direction)
+    """Plain or adjusted EBITDA / Revenue.
+
+    Adjusted (covenant wording «Скорректированная EBITDA»):
+      Rev − OpEx − disclosed one-time items + qualifying add-backs (≥ materiality).
+    Equivalently: base EBITDA − non-qualifying one-time (sub-threshold stays deducted).
+    """
+    use_adj = bool(m.one_time_items) or m.add_backs > 0 or "adjust" in (
+        getattr(m, "meta", {}) or {}
+    ).get("formula_hint", "")
+    # Always prefer adjusted_ebitda when one-time table was parsed
+    ebitda = m.adjusted_ebitda if (m.one_time_items or m.add_backs > 0) else m.ebitda
+    raw = (ebitda / m.revenue) if m.revenue > 0 else 0.0
+    actual = _r2(raw)
+    status = _status(raw, thr, direction)
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
-        reasoning=f"EBITDA/Revenue = {ebitda:.2f}/{m.revenue:.2f} = {actual:.2f}; thr {direction} {thr}",
-        confidence=0.85 if m.revenue > 0 else 0.4,
-        formula_id="ebitda_margin",
+        reasoning=(
+            f"AdjEBITDA/Revenue = {ebitda:.2f}/{m.revenue:.2f} = {raw:.4f}→{actual:.2f}; "
+            f"opex={m.opex:.2f} add_backs={m.add_backs:.2f} "
+            f"non_qual_one_time={m.non_qualifying_one_time:.2f}; thr {direction} {thr}"
+        ),
+        confidence=0.95 if m.revenue > 0 else 0.4,
+        formula_id="adj_ebitda_margin" if (m.one_time_items or m.add_backs) else "ebitda_margin",
     )
 
 

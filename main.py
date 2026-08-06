@@ -110,6 +110,27 @@ def cmd_extract_covenants(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    from agent.config import SUBMISSION_PATH, TEMPLATE_PATH
+
+    # Load validator without requiring scripts to be a package
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "validate_submission",
+        ROOT / "scripts" / "validate_submission.py",
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    submission = Path(args.submission) if getattr(args, "submission", None) else SUBMISSION_PATH
+    template = Path(args.template) if getattr(args, "template", None) else TEMPLATE_PATH
+    errors = mod.validate_submission(submission, template)
+    print(mod.format_report(errors))
+    return 0 if not errors else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Halyk Covenant Monitoring Agent")
     sub = p.add_subparsers(dest="command", required=True)
@@ -133,6 +154,21 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("extract-covenants", help="Extract Article 6 from a loan PDF")
     s.add_argument("path", type=str)
     s.set_defaults(func=cmd_extract_covenants)
+
+    s = sub.add_parser("validate", help="Validate submission.json vs submission_template.json")
+    s.add_argument(
+        "--submission",
+        type=str,
+        default=None,
+        help="path to submission.json (default: ./submission.json)",
+    )
+    s.add_argument(
+        "--template",
+        type=str,
+        default=None,
+        help="path to submission_template.json",
+    )
+    s.set_defaults(func=cmd_validate)
 
     return p
 
