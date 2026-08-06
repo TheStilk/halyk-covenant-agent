@@ -1,6 +1,6 @@
 """Extract financial metrics for covenant analysis.
 
-Sources (Master Plan §7 step 4):
+Sources:
 - financial_notes + AUP reports (reclassifications, cut-offs, add-backs)
 - KYC (related parties + ownership threshold)
 - ledger (transaction classification + aggregates)
@@ -136,7 +136,7 @@ class ScenarioMetrics:
         return d
 
     def summary_for_llm(self) -> str:
-        """Compact metrics block for Qwen user prompt."""
+        """Compact metrics block for LLM prompts."""
         lines = [
             f"scenario_id: {self.scenario_id}",
             f"account_id: {self.account_id}",
@@ -242,8 +242,168 @@ def normalize_category(label: str) -> str:
 
 
 def classify_txn_category(description: str, amount: float) -> str:
-    """Heuristic category from ledger description (no category column in CSV)."""
+    """Heuristic category from ledger description (no category column in CSV).
+
+    Positive amounts: revenue / financing / refunds mapped to their expense family
+    (interest, insurance, tax, …) so other_inflow shrinks. Aggregates still only
+    sum outflows for expense buckets — open-set math unchanged for known formulas.
+    """
     d = description.lower()
+
+    # --- shared keyword families (both directions) ---
+    def _is_interest(s: str) -> bool:
+        return any(
+            k in s
+            for k in (
+                "loan interest",
+                "interest payment",
+                "interest coupon",
+                "interest on",
+                "accrued interest",
+                "default interest",
+                "finance sublease",
+                "revolver interest",
+                "term loan interest",
+                "credit facility interest",
+                "overdraft interest",
+                "capitalised interest",
+                "capitalized interest",
+                "interest true-up",
+                "interest true up",
+                "interest credited",
+                "interest income",
+                "interest recovery",
+                "interest on escrow",
+                "interest rebate",
+                "процент",
+            )
+        )
+
+    def _is_tax(s: str) -> bool:
+        return any(
+            k in s
+            for k in (
+                "tax",
+                "excise",
+                "duty",
+                "withholding",
+                "franchise tax",
+                "mineral extraction",
+                "emissions tax",
+                "use tax",
+                "vat instalment",
+                "vat refund",
+                "vat reclaim",
+                "vat credit",
+                "tax credit",
+                "tax reclaim",
+                "tax refund",
+            )
+        )
+
+    def _is_insurance(s: str) -> bool:
+        return any(
+            k in s
+            for k in (
+                "insurance",
+                "workers comp",
+                "premium refund",
+                "premium rebate",
+                "broker rebate",
+                "experience refund",
+                "deductible recovery",
+                "claim reimbursement",
+            )
+        ) or (
+            # standalone insurance premium (avoid matching unrelated "premium" words)
+            "premium" in s and ("insurance" in s or "insurer" in s or "policy" in s)
+        ) or (s.strip().startswith("premium ") and "share" not in s)
+
+    def _is_lease_rent(s: str) -> bool:
+        if "interest" in s or "leased line" in s:
+            return False
+        return any(
+            k in s
+            for k in (
+                "land lease",
+                "yard lease",
+                "warehouse lease",
+                "depot yard rent",
+                "terminal land lease",
+                "equipment yard lease",
+                "antenna mast lease",
+                "rent for ",
+                "retail unit rent",
+                "office rent",
+                "warehouse rent",
+                "storage unit rent",
+                "storage rent",
+                "warehouse storage",
+                "rent free period",
+                "rent-free",
+                "lease payments",
+                "lease deposit",
+                "lease incentive",
+            )
+        ) or s.startswith("rent ") or " lease" in s or s.endswith(" lease")
+
+    def _is_utilities(s: str) -> bool:
+        return any(
+            k in s
+            for k in (
+                "electric",
+                "utility",
+                "utilities",
+                "water charge",
+                "water supply",
+                "water and sewer",
+                "waste water",
+                "wastewater",
+                "sewer discharge",
+                "sewer charge",
+                "telecom",
+                "compressed air",
+                "leased line",
+                "mobile fleet",
+                "overbilling refund",
+                "metering correction",
+            )
+        )
+
+    def _is_payroll(s: str) -> bool:
+        return any(
+            k in s
+            for k in (
+                "payroll",
+                "salary",
+                "wage",
+                "night shift",
+                "staff",
+                "overfunding returned",
+            )
+        )
+
+    def _is_marketing(s: str) -> bool:
+        return any(
+            k in s
+            for k in (
+                "marketing",
+                "media buy",
+                "advert",
+                "sponsorship",
+                "newsletter",
+                "exhibition",
+                "campaign",
+                "trade press",
+                "vehicle livery",
+                "volume rebate",
+                "co-operative funding",
+                "cooperative funding",
+                "rate adjustment credit",
+                "unused ad ",
+            )
+        )
+
     if amount > 0:
         if any(
             k in d
@@ -272,6 +432,21 @@ def classify_txn_category(description: str, amount: float) -> str:
             )
         ):
             return "financing"
+        # Refunds / credits — map to family (do not call them revenue)
+        if _is_interest(d):
+            return "interest"
+        if _is_tax(d):
+            return "tax"
+        if _is_insurance(d):
+            return "insurance"
+        if _is_lease_rent(d):
+            return "lease"
+        if _is_utilities(d):
+            return "utilities"
+        if _is_payroll(d):
+            return "payroll"
+        if _is_marketing(d):
+            return "marketing"
         return "other_inflow"
 
     # expenses (amount < 0)
@@ -296,85 +471,30 @@ def classify_txn_category(description: str, amount: float) -> str:
         return "opex"
     if "maintenance expense" in d or "operating expenses" in d:
         return "opex"
-    if any(
-        k in d
-        for k in (
-            "loan interest",
-            "interest payment",
-            "interest coupon",
-            "interest on",
-            "accrued interest",
-            "default interest",
-            "finance sublease",
-            "revolver interest",
-            "term loan interest",
-            "credit facility interest",
-        )
-    ):
+    if _is_interest(d):
         return "interest"
-    if any(
-        k in d
-        for k in (
-            "tax",
-            "excise",
-            "duty",
-            "withholding",
-            "franchise tax",
-            "mineral extraction",
-            "emissions tax",
-            "use tax",
-            "vat instalment",
-        )
-    ):
+    if _is_tax(d):
         return "tax"
-    if any(k in d for k in ("insurance", "premium", "workers comp")):
+    if _is_insurance(d):
         return "insurance"
-    if any(k in d for k in ("payroll", "salary", "wage", "night shift", "staff")):
+    if _is_payroll(d):
         return "payroll"
     # Telecom "leased line" is utility, not facility lease
     if "leased line" in d or "mobile fleet" in d:
         return "utilities"
-    if any(
-        k in d
-        for k in (
-            "land lease",
-            "yard lease",
-            "warehouse lease",
-            "depot yard rent",
-            "terminal land lease",
-            "equipment yard lease",
-            "antenna mast lease",
-            "rent for ",
-            "retail unit rent",
-            "office rent",
-            "warehouse rent",
-        )
-    ) and "interest" not in d:
+    if _is_lease_rent(d):
         return "lease"
-    if d.startswith("rent ") or " lease" in d or d.endswith(" lease") or "lease payments" in d:
-        if "interest" not in d and "leased line" not in d:
-            return "lease"
-    if any(k in d for k in ("electric", "utility", "water charge", "waste water", "telecom", "compressed air")):
+    if _is_utilities(d):
         return "utilities"
-    if any(
-        k in d
-        for k in (
-            "marketing",
-            "media buy",
-            "advert",
-            "sponsorship",
-            "newsletter",
-            "exhibition",
-            "campaign",
-            "trade press",
-            "vehicle livery",
-        )
-    ):
+    if _is_marketing(d):
         return "marketing"
     if any(k in d for k in ("management advisory", "retainer", "advisory engagement")):
         return "related_fee"
-    if "consult" in d or "advisory" in d:
+    if "consult" in d or "advisory" in d or "arbitration and legal" in d:
         return "consulting"
+    # fire safety servicing → opex (not one-time repair works — leave those other)
+    if "fire safety" in d and "servicing" in d:
+        return "opex"
     return "other_expense"
 
 
@@ -1228,7 +1348,11 @@ def extract_scenario_metrics(
         "n_reclass": len(metrics.reclassifications),
         "n_related_parties": sum(1 for p in metrics.related_parties if p.is_related),
         "group_capex": metrics.group_capex,
-        "unrestricted_subs": [s.name for s in metrics.unrestricted_subsidiaries if s.is_unrestricted],
+        "unrestricted_subs": [
+            s.name for s in metrics.unrestricted_subsidiaries if s.is_unrestricted
+        ],
+        "missing_amounts": dict(missing_amounts),
+        "missing_amount_count": len(missing_amounts),
     }
     return metrics
 

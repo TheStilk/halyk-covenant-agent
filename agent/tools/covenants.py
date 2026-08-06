@@ -1,62 +1,78 @@
-"""Extract the financial-covenant clauses named by the submission template.
+"""Extract financial covenant clauses from loan agreements (template-driven).
 
-Which article holds them and which clause numbers exist are read off the
-template, not hardcoded: the private template may number them differently
-(audit finding C4).
+Covenant ids come from submission_template.json (via agent.config), not a
+hardcoded 6.1/6.2/6.3 list. Block discovery:
+  1) clause numbers from template (Пункт/Clause/N.M)
+  2) fallback: Статья N / Article N (N = major number of template ids)
 """
 
 from __future__ import annotations
 
 import re
-from functools import lru_cache
-from typing import Optional
+from typing import Iterable, Optional, Sequence
 
+from agent.config import COVENANT_IDS
 from agent.models import CovenantText
-from agent.tools.template import all_covenant_ids, article_numbers
 
 
-@lru_cache(maxsize=8)
-def _article_start_re(articles: tuple[str, ...]) -> re.Pattern[str]:
-    """Header of the covenant article body, e.g. "Статья 6 — Финансовые ковенанты".
-
-    The title text after the number is optional: an agreement is free to call
-    the section anything, and on the private set it probably will.
-    """
-    alt = "|".join(re.escape(a) for a in articles)
-    return re.compile(
-        rf"(?:Статья|Article|ARTICLE|Раздел)\s+(?:{alt})\b"
-        rf"(?:\s*[—\-–:]\s*[^\n]{{0,80}})?",
-        re.IGNORECASE,
-    )
+def _article_major(covenant_ids: Sequence[str]) -> str:
+    """Infer article number from ids like 6.1 → '6'. Default '6'."""
+    majors: list[str] = []
+    for cid in covenant_ids:
+        m = re.match(r"^(\d+)\.", str(cid).strip())
+        if m and m.group(1) not in majors:
+            majors.append(m.group(1))
+    return majors[0] if majors else "6"
 
 
-@lru_cache(maxsize=8)
-def _article_end_re(articles: tuple[str, ...]) -> re.Pattern[str]:
-    """Header of any article numbered above the covenant article(s)."""
-    highest = max((int(a) for a in articles if a.isdigit()), default=6)
-    following = "|".join(str(n) for n in range(highest + 1, highest + 4))
-    return re.compile(
-        rf"(?:Статья|Article|ARTICLE|Раздел)\s+(?:{following})\b",
-        re.IGNORECASE,
-    )
-
-
-@lru_cache(maxsize=8)
-def _clause_header_re(clause_ids: tuple[str, ...]) -> re.Pattern[str]:
-    """Clause headers for exactly the ids the template asks about.
-
-    Matches "Пункт 6.1", "Clause 6.1", "6.1." and "6.1)" — but only for ids
-    present in the template, so body cross-references to other clauses do not
-    open a new section.
-    """
-    alt = "|".join(re.escape(cid) for cid in sorted(clause_ids, key=len, reverse=True))
+def _clause_header_re(covenant_ids: Sequence[str]) -> re.Pattern[str]:
+    """Build header matcher for the given covenant ids (order-independent)."""
+    ids = [str(c).strip() for c in covenant_ids if str(c).strip()]
+    if not ids:
+        ids = list(COVENANT_IDS)
+    # Longer first so 6.10 wins over 6.1
+    alts = "|".join(re.escape(c) for c in sorted(ids, key=len, reverse=True))
     return re.compile(
         rf"(?:"
-        rf"(?:Пункт|Clause|п\.)\s*({alt})(?![\d.])"
-        rf"|(?<![\d.])({alt})(?![\d.])\s*[—\-–.:)]\s+"
+        rf"Пункт\s+({alts})\b"
+        rf"|Clause\s+({alts})\b"
+        rf"|(?<!\d)({alts})\s*[—\-–.:)]\s+"
         rf")",
         re.IGNORECASE,
     )
+
+
+def _article_start_re(major: str) -> re.Pattern[str]:
+    m = re.escape(major)
+    return re.compile(
+        rf"(?:"
+        rf"Статья\s+{m}\s*[—\-–:]\s*Финансовые\s+ковенанты"
+        rf"|Article\s+{m}\s*[—\-–:]\s*(?:Financial\s+)?Covenants?"
+        rf"|ARTICLE\s+{m}\s*[—\-–:]\s*(?:FINANCIAL\s+)?COVENANTS?"
+        rf"|Статья\s+{m}\b"
+        rf"|Article\s+{m}\b"
+        rf")",
+        re.IGNORECASE,
+    )
+
+
+def _article_end_re(major: str) -> re.Pattern[str]:
+    """Next article after the covenants article (major+1 .. major+2)."""
+    try:
+        n = int(major)
+        nxt = [str(n + 1), str(n + 2)]
+    except ValueError:
+        nxt = ["7", "8"]
+    alts = "|".join(re.escape(x) for x in nxt)
+    return re.compile(
+        rf"(?:"
+        rf"Статья\s+(?:{alts})\b"
+        rf"|Article\s+(?:{alts})\b"
+        rf"|ARTICLE\s+(?:{alts})\b"
+        rf")",
+        re.IGNORECASE,
+    )
+
 
 # Page furniture to strip from extracted text
 _PAGE_NOISE = re.compile(
@@ -66,61 +82,82 @@ _PAGE_NOISE = re.compile(
 )
 
 
-def extract_article6_block(
+def extract_covenant_block(
     text: str,
-    *,
-    clause_ids: tuple[str, ...] | None = None,
+    covenant_ids: Sequence[str] | None = None,
 ) -> Optional[str]:
-    """Return the covenant-article body text, or None if not found."""
-    ids = clause_ids or all_covenant_ids()
-    articles = article_numbers()
+    """Return the covenant section body, or None if not found.
 
-    # Prefer the *last* match of the article header — the TOC entry comes first
-    matches = list(_article_start_re(articles).finditer(text))
-    if matches:
-        start = matches[-1].start()
-    else:
-        # Fallback: start at the first clause header the template asks about.
-        # This is the path that has to work when the private agreement titles
-        # its sections differently from "Статья 6 — Финансовые ковенанты".
-        first = _clause_header_re(ids).search(text)
-        if not first:
-            return None
-        start = first.start()
+    Strategy:
+      1. Locate the first template clause header (Пункт/Clause/id) — preferred
+      2. Else locate Статья N / Article N financial covenants header
+      3. Slice until next article or a generous window
+    """
+    ids = tuple(covenant_ids) if covenant_ids is not None else COVENANT_IDS
+    major = _article_major(ids)
+    header_re = _clause_header_re(ids)
+    article_re = _article_start_re(major)
+    end_re = _article_end_re(major)
+
+    start: Optional[int] = None
+
+    # --- 1) clause numbers from template ---
+    clause_hits = list(header_re.finditer(text))
+    if clause_hits:
+        first_clause = min(clause_hits, key=lambda m: m.start())
+        # Prefer article header just before the first clause when present
+        article_hits = [m for m in article_re.finditer(text) if m.start() <= first_clause.start()]
+        if article_hits:
+            start = article_hits[-1].start()
+        else:
+            start = first_clause.start()
+
+    # --- 2) fallback: Статья N / Article N ---
+    if start is None:
+        matches = list(article_re.finditer(text))
+        if matches:
+            # Prefer last match (TOC often appears earlier)
+            start = matches[-1].start()
+
+    if start is None:
+        return None
 
     rest = text[start:]
-    end_m = _article_end_re(articles).search(rest)
-    # Skip end match if it appears too early (within header line)
+    end_m = end_re.search(rest)
     if end_m and end_m.start() > 40:
         block = rest[: end_m.start()]
     else:
-        # take a generous window
-        block = rest[:6000]
+        block = rest[:8000]
 
     block = _PAGE_NOISE.sub("", block)
     block = re.sub(r"\n{3,}", "\n\n", block)
-    return block.strip()
+    return block.strip() or None
+
+
+# Back-compat alias
+def extract_article6_block(text: str) -> Optional[str]:
+    return extract_covenant_block(text, COVENANT_IDS)
 
 
 def split_covenant_clauses(
-    article6_text: str,
-    *,
-    clause_ids: tuple[str, ...] | None = None,
+    block_text: str,
+    covenant_ids: Sequence[str] | None = None,
 ) -> dict[str, str]:
-    """Split the covenant-article body into per-clause full texts."""
+    """Split covenant section body into per-id full-text clauses."""
     result: dict[str, str] = {}
-    if not article6_text:
+    if not block_text:
         return result
 
-    ids = clause_ids or all_covenant_ids()
+    ids = tuple(covenant_ids) if covenant_ids is not None else COVENANT_IDS
+    id_set = set(ids)
+    header_re = _clause_header_re(ids)
 
-    # Find all clause header positions
     headers: list[tuple[int, str]] = []
-    for m in _clause_header_re(ids).finditer(article6_text):
+    for m in header_re.finditer(block_text):
         cid = next(g for g in m.groups() if g)
-        if cid not in ids:
+        cid = str(cid).strip()
+        if cid not in id_set:
             continue
-        # avoid double-hit for same id
         if any(h[1] == cid for h in headers):
             continue
         headers.append((m.start(), cid))
@@ -130,11 +167,10 @@ def split_covenant_clauses(
 
     headers.sort(key=lambda x: x[0])
     for i, (pos, cid) in enumerate(headers):
-        end = headers[i + 1][0] if i + 1 < len(headers) else len(article6_text)
-        clause = article6_text[pos:end].strip()
+        end = headers[i + 1][0] if i + 1 < len(headers) else len(block_text)
+        clause = block_text[pos:end].strip()
         clause = re.sub(r"[ \t]+", " ", clause)
         clause = re.sub(r"\n{3,}", "\n\n", clause)
-        # Drop trailing page numbers / whitespace
         clause = clause.strip()
         if clause:
             result[cid] = clause
@@ -146,15 +182,15 @@ def extract_covenants(
     text: str,
     *,
     source_path: Optional[str] = None,
-    clause_ids: tuple[str, ...] | None = None,
+    covenant_ids: Sequence[str] | None = None,
 ) -> dict[str, CovenantText]:
-    """Full pipeline: find the covenant article → split clauses → CovenantText map."""
-    ids = clause_ids or all_covenant_ids()
-    block = extract_article6_block(text, clause_ids=ids)
+    """Find covenant block → split by template ids → CovenantText map."""
+    ids = tuple(covenant_ids) if covenant_ids is not None else COVENANT_IDS
+    block = extract_covenant_block(text, ids)
     if not block:
         return {}
 
-    clauses = split_covenant_clauses(block, clause_ids=ids)
+    clauses = split_covenant_clauses(block, ids)
     out: dict[str, CovenantText] = {}
     for cid, clause_text in clauses.items():
         out[cid] = CovenantText(
@@ -168,3 +204,8 @@ def extract_covenants(
 def covenants_to_dict(covenants: dict[str, CovenantText]) -> dict[str, str]:
     """Convert to simple id → text dict for AgentState."""
     return {cid: c.text for cid, c in covenants.items()}
+
+
+def expected_covenant_count(covenant_ids: Iterable[str] | None = None) -> int:
+    ids = list(covenant_ids) if covenant_ids is not None else list(COVENANT_IDS)
+    return len(ids)

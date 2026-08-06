@@ -10,7 +10,13 @@
 
 Результат — один файл `submission.json` строго по шаблону `submission_template.json`.
 
-**Open-set (фаза 3):** hackathon score ≈ **90.3%**, status accuracy **91.7%**, evidence **100%** (9/9 non-null).
+**Open set (финал):** hackathon score **100%** (36/36), status **100%**, evidence **100%** (9/9 non-null).
+
+**Команда:** «Сычуанский Соус» · `serkebaevmadiyar09@gmail.com`, `zhenis415@gmail.com`
+
+**Репозиторий:** https://github.com/TheStilk/halyk-covenant-agent
+
+**Архитектура:** hybrid — **deterministic first**; LLM Formula Reader только для **unknown / low-conf** (интерпретация → code считает). Open set **100% без ключей**.
 
 ---
 
@@ -19,16 +25,15 @@
 | Документ | О чём |
 |----------|--------|
 | [README.md](README.md) (этот файл) | Быстрый старт, обзор, команды |
-| [docs/architecture.md](docs/architecture.md) | Пайплайн, модули, State, формулы |
-| [docs/usage.md](docs/usage.md) | CLI, env, прогоны, отладка |
-| [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, маппинг, оценка хакатона |
-| [PLAN.md](PLAN.md) | Master Plan (единственный source of truth по ТЗ) |
+| [docs/architecture.md](docs/architecture.md) | Пайплайн, formulas, LLM env, diagnostics |
+| [docs/usage.md](docs/usage.md) | CLI, env, battle diagnostics, validate |
+| [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, taxonomy, scoring |
 
 ---
 
 ## Быстрый старт
 
-Требования: **Python ≥ 3.12**, [uv](https://github.com/astral-sh/uv), `pdftotext` / `pdftoppm` / `tesseract` (желательно — для OCR KYC).
+Требования: **Python ≥ 3.12**, [uv](https://github.com/astral-sh/uv), `pdftotext` / `pdftoppm` / `tesseract` (рекомендуется — OCR KYC и таблиц EBITDA).
 
 ```bash
 # 1. Зависимости + .venv
@@ -40,11 +45,15 @@ cp .env.example .env
 # 3. Полный прогон → submission.json
 uv run python main.py phase3
 
-# 4. Сверка с ground_truth (open set)
+# 4. Валидация формата сдачи
+uv run python main.py validate
+
+# 5. Сверка с ground_truth (open set)
 uv run python scripts/eval_phase2.py
 ```
 
-Без API-ключей агент работает **детерминированным formula engine** (Qwen/Gemini подключаются при наличии ключей и низкой confidence).
+Без `LLM_*` агент работает **детерминированным formula engine**.  
+С ключом — optional Formula Reader / reflection (модель задаётся только env).
 
 ---
 
@@ -60,25 +69,29 @@ PDF (opaque hashes) + master_ledger_2025.csv
   classify PDF → loan | notes | kyc | junk
         │
         ▼
-  Article 6 → тексты 6.1 / 6.2 / 6.3
+  template covenant ids → clause texts (fallback Article N)
         │
         ▼
-  metrics: Revenue, EBITDA, Capex, RP, Group Capex, reclass, cut-off…
+  metrics: Revenue, EBITDA, Capex, RP, Group Capex,
+           reclass, cut-off, FX, NaN fills, one-time add-backs…
         │
         ▼
-  formula engine (+ optional Qwen) → status / actual / evidence
+  formula engine (known) → unknown best-effort → optional LLM reader
         │
         ▼
-  submission.json
+  ensure no null cells → submission.json → battle diagnostics → validate
 ```
 
 Ключевые технические приёмы:
 
-- **Кэш PDF** (`diskcache`) — повторные прогоны быстрые  
-- **Final AUP only** — промежуточные «ПРОЕКТ»-ведомости игнорируются  
-- **Group Capex** — PPE rollforward из consolidated FS материнской группы  
-- **KYC OCR** — таблицы related parties / unrestricted subsidiaries  
-- **evidence** — транзакция, без которой вердикт меняется  
+- **Hybrid battle policy** — det always; LLM reader only unknown/low-conf; mismatch → det if known  
+- **Model via env only** — `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `MODEL_LABEL`  
+- **Never-null cells** — sanitize + validate hard-fail  
+- **Extract quality** — markers/cyrillic/density; multi-backend fallback  
+- **Template-driven covenants** — ids from `submission_template.json`  
+- **Taxonomy** — `other_*` ~0.6%  
+- **Battle diagnostics** — end of `phase3`  
+- **Group Capex / Adj EBITDA / NaN fills / FX / KYC OCR / evidence**
 
 ---
 
@@ -86,33 +99,22 @@ PDF (opaque hashes) + master_ledger_2025.csv
 
 ```
 hakaton/
-├── PLAN.md                 # Master Plan (ТЗ)
 ├── README.md
-├── docs/                   # подробная документация
-├── pyproject.toml          # зависимости (uv)
-├── uv.lock
-├── requirements.txt        # uv export (совместимость)
+├── docs/                   # usage, architecture, scoring
+├── archive/                # historical LLM smoke reports (no keys)
+├── pyproject.toml / uv.lock
 ├── .env.example
-├── main.py                 # CLI entrypoint
-├── agent/
-│   ├── config.py           # пути, модели, knobs
-│   ├── models.py           # Pydantic-схемы
-│   ├── state.py            # LangGraph AgentState
-│   ├── graph.py            # граф: load → classify → … → collect
-│   ├── prompts/system.py   # боевые промпты §6
-│   ├── nodes/              # ноды графа
-│   └── tools/              # ledger, pdf, metrics, formulas, llm
+├── main.py                 # CLI
+├── agent/                  # graph, nodes, tools (det + optional LLM)
 ├── scripts/
 │   ├── smoke_phase1.py
+│   ├── smoke_llm.py
 │   ├── run_one_scenario.py
-│   └── eval_phase2.py
+│   ├── eval_phase2.py
+│   └── validate_submission.py
 ├── agentic-bank-public/    # open dataset
-│   ├── master_ledger_2025.csv
-│   ├── documents/
-│   ├── submission_template.json
-│   └── ground_truth.json
-├── doc_cache/              # кэш извлечённого текста PDF
-└── submission.json         # выход (gitignored)
+├── doc_cache/              # gitignored
+└── submission.json         # gitignored
 ```
 
 ---
@@ -121,30 +123,41 @@ hakaton/
 
 ```bash
 uv run python main.py foundation      # Phase 1: ledger + classify + Article 6
-uv run python main.py phase2          # полный расчёт
+uv run python main.py phase2          # полный расчёт → submission.json
 uv run python main.py phase3          # alias phase2
+uv run python main.py validate        # проверка submission vs template
 uv run python main.py map-accounts    # account ↔ scenario
 uv run python main.py classify PATH   # один PDF
 uv run python main.py extract-covenants PATH
 
 uv run python scripts/smoke_phase1.py
+uv run python scripts/smoke_llm.py          # optional, needs LLM_*
 uv run python scripts/run_one_scenario.py P1 P5
-uv run python scripts/eval_phase2.py
-uv run python scripts/eval_phase2.py --scenarios P5 B1
+uv run python scripts/eval_phase2.py        # 36/36, no LLM by default
+uv run python scripts/validate_submission.py
 ```
 
 Подробнее: [docs/usage.md](docs/usage.md).
 
 ---
 
-## Модели (по ТЗ)
+## LLM (optional)
 
-| Модель | Роль |
-|--------|------|
-| **Qwen 3.8-Max** | Reasoning, structured `CovenantVerdict`, reflection |
-| **Gemini 3.6 Flash** | Быстрая классификация / bulk (опционально) |
+Любой **OpenAI-compatible** endpoint:
 
-Переменные: `QWEN_API_KEY`, `QWEN_BASE_URL`, `QWEN_MODEL`, `GOOGLE_API_KEY`, `GEMINI_MODEL` — см. `.env.example`.
+```bash
+LLM_API_KEY=...
+LLM_BASE_URL=https://your-provider/v1
+LLM_MODEL=provider/model-id
+# MODEL_LABEL=...   # submission.model; default = LLM_MODEL
+```
+
+Battle default: **LLM only when det is unknown/low-conf**  
+(`LLM_FORMULA_READER_ONLY_UNKNOWN=true`).  
+Mismatch on known formulas → **det wins**.
+
+Без ключа: полный det path, open set 100%.  
+Исторические smoke-отчёты: [archive/gemini-llm-probe-20260806/](archive/gemini-llm-probe-20260806/).
 
 ---
 
@@ -156,18 +169,42 @@ uv run python scripts/eval_phase2.py --scenarios P5 B1
 - **diskcache** — кэш документов  
 - **pandas / pydantic** — ledger и structured I/O  
 - **uv** — env + lock  
+- **tesseract / pdftoppm** — OCR KYC и таблиц notes  
 
 ---
 
 ## Оценка (кратко)
 
-Каждая ячейка 0–1:
+36 ячеек (12 сценариев × 3 ковенанта). Каждая 0–1:
 
-- `status` — **0.50** (exact; неверный status → вся ячейка 0)  
-- `actual` — **0.30** × `max(0, 1 − e/0.05)`, `e = |pred−true|/|true|`  
-- `evidence_txn_id` — **0.20** (exact; если в GT `null` — баллы идут вместе с `actual`)
+| Компонент | Баллы | Условие |
+|-----------|-------|---------|
+| `status` | **0.50** | exact; неверный → вся ячейка 0 |
+| `actual` | **0.30** | `0.30 × max(0, 1 − e/0.05)`, `e = \|pred−true\|/\|true\|` |
+| `evidence_txn_id` | **0.20** | exact; если GT `null` — масштабируется с `actual` |
 
+Open set: **36.0 / 36.0 (100%)**.  
 Детали: [docs/data-and-scoring.md](docs/data-and-scoring.md).
+
+---
+
+## Боевой день (private set)
+
+```bash
+export DATA_DIR=/path/to/private-dataset
+# optional: LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
+rm -rf doc_cache
+uv run python main.py phase3
+# === BATTLE DIAGNOSTICS ===
+uv run python main.py validate
+```
+
+На private set:
+
+1. Full **det** always (backup).  
+2. Optional `LLM_*` → reader only on unknown/low-conf.  
+3. Template covenant ids; never-null cells; battle diagnostics.  
+4. `MODEL_LABEL` корректный в submission.
 
 ---
 

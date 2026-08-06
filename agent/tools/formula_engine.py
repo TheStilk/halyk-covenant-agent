@@ -801,6 +801,193 @@ _FORMULA_HANDLERS: dict[str, Callable[[ScenarioMetrics, float, str], FormulaResu
     "financing_to_ebitda": _compute_financing_to_ebitda,
 }
 
+# Confidence ceiling for non-catalog / best-effort paths (LLM may refine later)
+_UNKNOWN_CONF = 0.28
+_HEURISTIC_CONF = 0.38
+
+
+def _lower_conf(result: FormulaResult, conf: float, tag: str) -> FormulaResult:
+    return FormulaResult(
+        actual=result.actual,
+        status=result.status,
+        evidence_txn_id=result.evidence_txn_id,
+        reasoning=f"[{tag}] {result.reasoning}",
+        confidence=min(float(result.confidence), conf),
+        formula_id=f"{tag}:{result.formula_id}",
+    )
+
+
+def _best_effort_unknown(
+    metrics: ScenarioMetrics,
+    thr: Optional[float],
+    direction: str,
+    text: str,
+    *,
+    covenant_id: str = "",
+) -> FormulaResult:
+    """Fill a cell when detect_formula_id failed — never silent BREACH/0.0.
+
+    Uses keyword cues + threshold shape (money vs ratio, min vs max) against
+    available ScenarioMetrics. Always returns status + actual >= 0 with low conf.
+    """
+    low = (text or "").lower()
+    direction = direction if direction in ("min", "max") else "max"
+
+    # --- soft keyword → existing handlers (low conf) ---
+    soft: list[tuple[bool, Callable, str]] = [
+        (
+            bool(re.search(r"ebitda|eбитда|марж", low)),
+            _compute_ebitda_margin,
+            "ebitda_margin",
+        ),
+        (
+            bool(re.search(r"interest\s+coverage|покрыт.*процент|процентн", low)),
+            _compute_interest_coverage,
+            "interest_coverage",
+        ),
+        (
+            bool(re.search(r"связанн|аффилир|related", low)),
+            _compute_max_related_party
+            if thr is not None and thr >= 100
+            else _compute_rp_to_revenue,
+            "related_party",
+        ),
+        (
+            bool(re.search(r"выручк|revenue|оборот", low)),
+            _compute_min_revenue,
+            "revenue",
+        ),
+        (
+            bool(re.search(r"капитальн|capex|ppe|основн", low)),
+            _compute_max_capex,
+            "capex",
+        ),
+        (
+            bool(re.search(r"налог|tax|коммунал|utilit", low)),
+            _compute_tax_util_to_ebitda,
+            "tax_util",
+        ),
+        (
+            bool(re.search(r"страхован|insurance", low)),
+            _compute_insurance_to_lease,
+            "insurance",
+        ),
+        (
+            bool(re.search(r"персонал|payroll|зарплат|wage", low)),
+            _compute_payroll_total,
+            "payroll",
+        ),
+    ]
+    for matched, handler, name in soft:
+        if not matched:
+            continue
+        use_thr = thr if thr is not None else 0.0
+        try:
+            fr = handler(metrics, use_thr, direction)
+            return _lower_conf(
+                fr,
+                _UNKNOWN_CONF,
+                f"unknown_best_effort:{name}",
+            )
+        except Exception:  # noqa: BLE001
+            continue
+
+    # --- shape-based guess from threshold magnitude ---
+    # thr >= 100 → treat as money; else ratio-like
+    is_money = thr is not None and thr >= 100.0
+
+    if direction == "min":
+        if is_money or thr is None:
+            actual = _r2(metrics.revenue)
+            t = thr if thr is not None else actual  # no thr → COMPLIANT on revenue
+            status = _status(actual, t, "min") if thr is not None else "COMPLIANT"
+            return FormulaResult(
+                actual=actual,
+                status=status,
+                evidence_txn_id=None,
+                reasoning=(
+                    f"unknown_best_effort:min_money covenant={covenant_id} "
+                    f"using revenue={actual} thr={thr}"
+                ),
+                confidence=_UNKNOWN_CONF,
+                formula_id="unknown_best_effort:min_money_revenue",
+            )
+        # min ratio — prefer interest coverage / ebitda margin
+        try:
+            fr = _compute_interest_coverage(metrics, thr or 1.0, "min")
+            return _lower_conf(fr, _UNKNOWN_CONF, "unknown_best_effort:min_ratio")
+        except Exception:  # noqa: BLE001
+            pass
+        ebitda_m = (
+            _r2(metrics.ebitda / metrics.revenue) if metrics.revenue > 0 else 0.0
+        )
+        status = _status(ebitda_m, thr or 0.0, "min")
+        return FormulaResult(
+            actual=ebitda_m,
+            status=status,
+            evidence_txn_id=None,
+            reasoning=f"unknown_best_effort:min_ratio ebitda/revenue={ebitda_m} thr={thr}",
+            confidence=_UNKNOWN_CONF,
+            formula_id="unknown_best_effort:min_ratio_ebitda_margin",
+        )
+
+    # direction == max
+    if is_money or thr is None:
+        # largest risk outflow among RP / capex / tax
+        candidates = {
+            "related_party": metrics.related_party_payments,
+            "capex": metrics.capex,
+            "tax": metrics.tax,
+            "opex": metrics.opex,
+        }
+        best_name, best_val = max(candidates.items(), key=lambda kv: kv[1])
+        actual = _r2(best_val)
+        if thr is not None:
+            status = _status(actual, thr, "max")
+        else:
+            # no thr: cannot prove compliance
+            status = "BREACH"
+        return FormulaResult(
+            actual=actual,
+            status=status,
+            evidence_txn_id=None,
+            reasoning=(
+                f"unknown_best_effort:max_money covenant={covenant_id} "
+                f"using {best_name}={actual} thr={thr}"
+            ),
+            confidence=_UNKNOWN_CONF,
+            formula_id=f"unknown_best_effort:max_money_{best_name}",
+        )
+
+    # max ratio
+    den = metrics.revenue if metrics.revenue > 0 else 1.0
+    raw = metrics.related_party_payments / den
+    actual = _r2(raw)
+    status, actual = _status_max_ratio(raw, thr or 0.0)
+    return FormulaResult(
+        actual=actual,
+        status=status,
+        evidence_txn_id=None,
+        reasoning=(
+            f"unknown_best_effort:max_ratio rp/revenue={actual} thr={thr} "
+            f"covenant={covenant_id}"
+        ),
+        confidence=_UNKNOWN_CONF,
+        formula_id="unknown_best_effort:max_ratio_rp_rev",
+    )
+
+
+def is_unknown_formula_verdict(verdict: CovenantVerdict) -> bool:
+    """True when deterministic path used unknown/best-effort (LLM may refine)."""
+    r = (verdict.reasoning or "").lower()
+    return (
+        "unknown" in r
+        or "best_effort" in r
+        or "heuristic_fallback" in r
+        or verdict.confidence < _HEURISTIC_CONF
+        and "could not parse threshold" in r
+    )
+
 
 def evaluate_covenant(
     covenant_text: str,
@@ -808,46 +995,74 @@ def evaluate_covenant(
     *,
     covenant_id: str = "",
 ) -> CovenantVerdict:
-    """Evaluate one covenant deterministically → CovenantVerdict."""
+    """Evaluate one covenant deterministically → CovenantVerdict.
+
+    Known open-set formulas: unchanged high-confidence handlers.
+    Unknown formulas: keyword remap → best-effort guess (never empty BREACH/0.0
+    without an attempted metric). LLM refine is handled by analyze_one_covenant.
+    """
     formula_id = detect_formula_id(covenant_text)
     thr, direction = parse_threshold(covenant_text)
+    handler = _FORMULA_HANDLERS.get(formula_id)
+    used_heuristic_remap = False
 
-    if thr is None:
+    # Soft remap only when catalog detection failed
+    if handler is None:
+        low = (covenant_text or "").lower()
+        if "связанн" in low or "аффилир" in low:
+            handler = _compute_max_related_party
+            formula_id = "max_related_party_fallback"
+            used_heuristic_remap = True
+        elif "выручк" in low:
+            handler = _compute_min_revenue
+            formula_id = "min_revenue_fallback"
+            used_heuristic_remap = True
+        elif "капитальн" in low:
+            handler = _compute_max_capex
+            formula_id = "max_capex_fallback"
+            used_heuristic_remap = True
+
+    # Known (or remapped) handler with threshold — primary path
+    if handler is not None and thr is not None:
+        result = handler(metrics, thr, direction)
+        conf = result.confidence
+        reasoning = f"[{result.formula_id}] {result.reasoning}"
+        if used_heuristic_remap:
+            conf = min(conf, _HEURISTIC_CONF)
+            reasoning = f"[heuristic_fallback:{formula_id}] {result.reasoning}"
+        return CovenantVerdict(
+            status=result.status,  # type: ignore[arg-type]
+            actual=_r2(result.actual),
+            evidence_txn_id=result.evidence_txn_id,
+            reasoning=reasoning,
+            confidence=conf,
+        )
+
+    # Known formula id but threshold unparseable — keep conservative (open-set always has thr)
+    if handler is not None and thr is None and not used_heuristic_remap:
         return CovenantVerdict(
             status="BREACH",
             actual=0.0,
             evidence_txn_id=None,
-            reasoning=f"Could not parse threshold from covenant {covenant_id}. formula_id={formula_id}",
+            reasoning=(
+                f"Could not parse threshold from covenant {covenant_id}. "
+                f"formula_id={formula_id}"
+            ),
             confidence=0.2,
         )
 
-    handler = _FORMULA_HANDLERS.get(formula_id)
-    if handler is None:
-        # Heuristic fallback: if money max + related → RP; if money min + revenue → revenue
-        low = covenant_text.lower()
-        if "связанн" in low or "аффилир" in low:
-            handler = _compute_max_related_party
-            formula_id = "max_related_party_fallback"
-        elif "выручк" in low:
-            handler = _compute_min_revenue
-            formula_id = "min_revenue_fallback"
-        elif "капитальн" in low:
-            handler = _compute_max_capex
-            formula_id = "max_capex_fallback"
-        else:
-            return CovenantVerdict(
-                status="BREACH",
-                actual=0.0,
-                evidence_txn_id=None,
-                reasoning=f"Unknown formula for covenant {covenant_id}: {formula_id}",
-                confidence=0.25,
-            )
-
-    result = handler(metrics, thr, direction)
+    # Unknown formula (or remapped without thr): best-effort, always filled
+    result = _best_effort_unknown(
+        metrics,
+        thr,
+        direction,
+        covenant_text,
+        covenant_id=covenant_id,
+    )
     return CovenantVerdict(
         status=result.status,  # type: ignore[arg-type]
         actual=_r2(result.actual),
         evidence_txn_id=result.evidence_txn_id,
-        reasoning=f"[{result.formula_id}] {result.reasoning}",
+        reasoning=result.reasoning,
         confidence=result.confidence,
     )

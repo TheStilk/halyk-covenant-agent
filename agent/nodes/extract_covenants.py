@@ -1,9 +1,10 @@
-"""Node [3]: Extract Article 6 clauses from loan agreements (per scenario)."""
+"""Node [3]: Extract financial covenant clauses from loan agreements (per scenario)."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from agent.config import COVENANT_IDS, covenant_ids_for_scenario
 from agent.models import DocType
 from agent.state import AgentState
 from agent.tools.covenants import covenants_to_dict, extract_covenants
@@ -12,11 +13,9 @@ from agent.tools.pdf_cache import read_pdf_with_cache
 
 
 def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
-    """Extract covenants for every scenario; store in docs_by_scenario side channel.
+    """Extract covenants for every scenario; store in documents bag.
 
-    Phase 1 stores a global map scenario → covenants in state under a temporary
-    key by merging into documents inventory. Per-borrower fan-out (Phase 2/3)
-    will pick covenants when processing each scenario.
+    Clause ids come from submission_template.json (per scenario when they differ).
     """
     docs_by_scenario = state.get("docs_by_scenario") or {}
     doc_index = state.get("doc_index") or []
@@ -27,6 +26,8 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
     path_to_text = _index_texts(doc_index)
 
     for scenario_id, by_type in docs_by_scenario.items():
+        expected_ids = covenant_ids_for_scenario(scenario_id)
+        expected_n = len(expected_ids)
         loan_paths = by_type.get(DocType.LOAN_AGREEMENT.value, [])
         best: dict[str, str] = {}
         for path in loan_paths:
@@ -37,12 +38,13 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
                 except Exception as exc:  # noqa: BLE001
                     print(f"[covenants] read fail {path}: {exc}")
                     continue
-            extracted = extract_covenants(text, source_path=path)
+            extracted = extract_covenants(
+                text, source_path=path, covenant_ids=expected_ids
+            )
             as_dict = covenants_to_dict(extracted)
-            # Prefer the loan that yields all 3 clauses
             if len(as_dict) > len(best):
                 best = as_dict
-            if len(best) >= 3:
+            if len(best) >= expected_n:
                 break
         covenants_by_scenario[scenario_id] = best
         print(
@@ -51,7 +53,7 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
             f"clauses={list(best.keys())}"
         )
 
-    # Also try scenarios that have no classified loan yet: scan all loans
+    # Scenarios with no classified loan: scan all loan agreements
     scenario_ids = state.get("scenario_ids") or list(sc_to_acc.keys())
     missing = [s for s in scenario_ids if not covenants_by_scenario.get(s)]
     if missing:
@@ -67,25 +69,29 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
                     text = read_pdf_with_cache(path).text
                 except Exception:  # noqa: BLE001
                     continue
-            extracted = extract_covenants(text, source_path=path)
+            sc = d.get("scenario_id")
+            ids = covenant_ids_for_scenario(sc) if sc else COVENANT_IDS
+            extracted = extract_covenants(text, source_path=path, covenant_ids=ids)
             as_dict = covenants_to_dict(extracted)
             if not as_dict:
                 continue
-            sc = d.get("scenario_id")
             if sc and not covenants_by_scenario.get(sc):
                 covenants_by_scenario[sc] = as_dict
                 print(f"[covenants] recovered {sc} from {path}")
 
-    # Attach into state via a documents global bag
     documents = {
         "covenants_by_scenario": covenants_by_scenario,
         "path_to_text_keys": list(path_to_text.keys()),
     }
 
-    n_full = sum(1 for c in covenants_by_scenario.values() if len(c) >= 3)
+    n_full = sum(
+        1
+        for sc, c in covenants_by_scenario.items()
+        if len(c) >= len(covenant_ids_for_scenario(sc))
+    )
     print(
-        f"[covenants] scenarios_with_full_article6={n_full}/"
-        f"{len(scenario_ids)}"
+        f"[covenants] scenarios_with_full_template_clauses="
+        f"{n_full}/{len(scenario_ids)}"
     )
 
     return {

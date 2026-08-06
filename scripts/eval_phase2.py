@@ -17,7 +17,7 @@ setup_console()
 
 
 def cell_score(pred: dict, truth: dict) -> dict:
-    """Score one cell 0..1 per Master Plan §2."""
+    """Score one cell 0..1 (status 0.5 + actual 0.3 + evidence 0.2)."""
     if not pred or pred.get("status") is None:
         return {"total": 0.0, "status": 0.0, "actual": 0.0, "evidence": 0.0}
 
@@ -63,13 +63,16 @@ def cell_score(pred: dict, truth: dict) -> dict:
 
 
 def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) -> dict:
-    from agent.config import GROUND_TRUTH_PATH, TEMPLATE_PATH
+    from agent.config import (
+        GROUND_TRUTH_PATH,
+        TEMPLATE_PATH,
+        covenant_ids_for_scenario,
+    )
     from agent.eval_split import split_of
     from agent.graph import run_foundation
     from agent.nodes.analyze import analyze_one_covenant
     from agent.tools.ledger import scenario_to_account, transactions_for_account
     from agent.tools.metrics import extract_metrics_for_state
-    from agent.tools.template import covenant_ids_for
 
     gt_raw = json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8"))
     gt = gt_raw.get("scenarios", gt_raw)
@@ -111,7 +114,7 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
             docs_by_scenario=docs_by,
             doc_index=doc_index,
         )
-        for cid in covenant_ids_for(sc):
+        for cid in covenant_ids_for_scenario(sc):
             text = (covenants_by.get(sc) or {}).get(cid, "")
             verdict = analyze_one_covenant(
                 scenario_id=sc,
@@ -121,11 +124,15 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
                 metrics=metrics,
                 use_llm=use_llm,
             )
-            pred = {
-                "status": verdict.status,
-                "actual": round(abs(float(verdict.actual)), 2),
-                "evidence_txn_id": verdict.evidence_txn_id,
-            }
+            from agent.models import ensure_filled_cell
+
+            pred = ensure_filled_cell(
+                {
+                    "status": verdict.status,
+                    "actual": verdict.actual,
+                    "evidence_txn_id": verdict.evidence_txn_id,
+                }
+            )
             truth = (gt.get(sc) or {}).get("covenants", {}).get(cid, {})
             sc_res = cell_score(pred, truth)
             n_cells += 1
@@ -178,7 +185,10 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
     print(f"hackathon score: {total_score:.3f} / {max_score:.1f}  ({pct:.1f}%)")
 
     # Per-split breakdown. Only the holdout number estimates anything; the train
-    # number is a fit statistic and must never be quoted as performance.
+    # number is a fit statistic and must never be quoted as performance — see
+    # EVAL_SPLIT.md. It also holds for the deterministic engine: its formula
+    # handlers were written looking at all 36 public cells, so even its
+    # holdout number here is an upper bound, not a clean estimate.
     by_split: dict[str, list[float]] = {}
     for r in rows:
         by_split.setdefault(r["split"], []).append(r["score"]["total"])

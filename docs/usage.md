@@ -3,7 +3,6 @@
 ## Установка
 
 ```bash
-# Python 3.12+ подтянется через uv при необходимости
 uv sync
 ```
 
@@ -12,8 +11,8 @@ uv sync
 | Утилита | Зачем |
 |---------|--------|
 | `pdftotext` (poppler) | fallback извлечения текста |
-| `pdftoppm` (poppler) | рендер страниц KYC для OCR |
-| `tesseract` (+ eng/rus) | OCR таблиц ownership / subsidiaries |
+| `pdftoppm` (poppler) | рендер страниц KYC / notes для OCR |
+| `tesseract` (+ eng/rus) | OCR ownership, subsidiaries, EBITDA tables |
 
 ```bash
 # Debian/Ubuntu (пример)
@@ -24,191 +23,165 @@ sudo apt install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
 
 ## Конфигурация (`.env`)
 
-Скопируйте `.env.example` → `.env`.
+```bash
+cp .env.example .env
+```
 
 | Переменная | Default | Описание |
 |------------|---------|----------|
-| `TEAM_NAME` | `halyk-covenant-agent` | поле submission |
-| `CONTACT_EMAIL` | `team@example.com` | поле submission |
+| `TEAM_NAME` | `Сычуанский Соус` | submission.team |
+| `CONTACT_EMAIL` | обе почты команды | submission.contact_email |
 | `DATA_DIR` | `./agentic-bank-public` | датасет |
 | `DOC_CACHE_DIR` | `./doc_cache` | кэш PDF |
-| `QWEN_API_KEY` | — | reasoning (или `OPENAI_API_KEY`) |
-| `QWEN_BASE_URL` | OpenRouter | OpenAI-compatible endpoint |
-| `QWEN_MODEL` | `qwen/qwen3.5-max` | slug модели |
-| `GOOGLE_API_KEY` | — | Gemini (или `GEMINI_API_KEY`) |
-| `GEMINI_MODEL` | `gemini-3.0-flash` | slug Flash |
-| `CLASSIFY_USE_LLM` | `false` | Gemini для ambiguous PDF |
-| `CONFIDENCE_THRESHOLD` | `0.85` | порог reflection / Qwen |
-| `MAX_BORROWER_CONCURRENCY` | `6` | задел под parallel |
+| `LLM_API_KEY` | — | OpenAI-compatible key |
+| `LLM_BASE_URL` | — | `https://host/v1` |
+| `LLM_MODEL` | — | model id у провайдера |
+| `MODEL_LABEL` | =`LLM_MODEL` | submission.model (или `deterministic-formula-engine`) |
+| `USE_LLM_FORMULA_READER` | `true` | enable Formula Reader |
+| `LLM_FORMULA_READER_ONLY_UNKNOWN` | `true` | LLM **только** unknown/low-conf det |
+| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | mismatch + known det → det |
+| `FORMULA_READER_MAX_TEXT_CHARS` | `900` | clip текста ковенанта в reader |
+| `LLM_MAX_TOKENS` | `8192` | max completion tokens |
+| `CLASSIFY_USE_LLM` | `false` | optional LLM classify |
+| `CONFIDENCE_THRESHOLD` | `0.85` | low-conf boundary |
 
-`model` в submission всегда: `qwen3.8-max + gemini-3.6-flash` (`config.MODEL_LABEL`).
+**Смена провайдера/модели:** только env, без правок кода.
+
+```bash
+export LLM_API_KEY=...
+export LLM_BASE_URL=https://your-provider/v1
+export LLM_MODEL=your/model-id
+
+uv run python scripts/smoke_llm.py   # available / structured smoke
+```
+
+Без ключей пайплайн полностью детерминированный.
 
 ---
 
 ## CLI (`main.py`)
 
-Все команды через `uv run`:
-
-### Полный пайплайн
-
 ```bash
-uv run python main.py phase3
-# или
-uv run python main.py phase2
-```
-
-Пишет `submission.json` в корень репозитория:
-
-```json
-{
-  "team": "...",
-  "contact_email": "...",
-  "model": "qwen3.8-max + gemini-3.6-flash",
-  "answers": {
-    "P1": {
-      "6.1": { "status": "BREACH", "actual": 0.46, "evidence_txn_id": null },
-      "6.2": { ... },
-      "6.3": { ... }
-    }
-  }
-}
-```
-
-### Phase 1 — foundation
-
-```bash
-uv run python main.py foundation
-```
-
-Только ledger + classify + Article 6. Полезно проверить покрытие 12/12 ковенантов.
-
-### Утилиты
-
-```bash
-# Маппинг счетов
+uv run python main.py phase3      # full pipeline → submission.json + diagnostics
+uv run python main.py validate
+uv run python main.py foundation  # ledger + classify + covenants only
 uv run python main.py map-accounts
-
-# Классификация одного PDF
-uv run python main.py classify agentic-bank-public/documents/1d262694c308.pdf
-
-# Извлечение Article 6
-uv run python main.py extract-covenants agentic-bank-public/documents/1d262694c308.pdf
+uv run python main.py classify PATH
+uv run python main.py extract-covenants PATH
 ```
+
+### Battle diagnostics (конец phase3)
+
+```text
+=== BATTLE DIAGNOSTICS ===
+cells filled: 36/36
+unknown formulas: …
+low confidence: …
+bad extracts: …
+missing amounts: …
+scenarios without loan: …
+scenarios without notes: …
+time total: …
+```
+
+### Validate
+
+```bash
+uv run python main.py validate
+uv run python scripts/validate_submission.py
+```
+
+Hard-fail на null/missing `status`/`actual`, неверный enum, лишние ключи vs template.
 
 ---
 
 ## Scripts
 
-### Smoke Phase 1
+| Script | Назначение |
+|--------|------------|
+| `scripts/smoke_phase1.py` | Phase 1 без LLM |
+| `scripts/smoke_llm.py` | LLM available + structured FormulaSpec |
+| `scripts/run_one_scenario.py` | 1+ сценариев vs ground_truth (`--llm` optional) |
+| `scripts/eval_phase2.py` | полный score 36 ячеек; `--scenarios` subset |
+| `scripts/validate_submission.py` | формат submission |
 
 ```bash
-uv run python scripts/smoke_phase1.py
+uv run python scripts/eval_phase2.py                 # 36/36 without LLM calls
+uv run python scripts/eval_phase2.py --scenarios P5 B1
+uv run python scripts/run_one_scenario.py P1
 ```
-
-Без LLM: mapping, cache, classifier, covenants, foundation graph.
-
-### Один / несколько сценариев
-
-```bash
-uv run python scripts/run_one_scenario.py           # default P1 P5
-uv run python scripts/run_one_scenario.py B1 P7
-uv run python scripts/run_one_scenario.py P5 --llm  # с Qwen, если ключ есть
-```
-
-Печатает metrics summary + таблицу pred vs ground_truth.
-
-### Оценка open set
-
-```bash
-uv run python scripts/eval_phase2.py
-uv run python scripts/eval_phase2.py --scenarios P1 P5 B1
-uv run python scripts/eval_phase2.py --llm
-```
-
-Вывод:
-
-- таблица по всем 36 ячейкам  
-- status / evidence accuracy  
-- mean/max relative error  
-- **hackathon score**  
-- **WORST CELLS** (низкий score + reasoning)  
 
 ---
 
 ## Типичные workflow
 
-### Open set: отладка одной ячейки
+### Open set
 
 ```bash
-uv run python scripts/run_one_scenario.py P5
-# смотрим metrics + reasoning formula_id
-uv run python scripts/eval_phase2.py --scenarios P5
+uv sync
+uv run python scripts/eval_phase2.py    # 36.0 / 36.0
+uv run python main.py phase3
+uv run python main.py validate
 ```
 
-### После смены кода формул
+### Private set (боевой день)
 
 ```bash
-uv run python scripts/eval_phase2.py
-# смотрим WORST CELLS
+export DATA_DIR=/path/to/private-dataset
+# optional LLM for unknown formulas:
+# export LLM_API_KEY=... LLM_BASE_URL=... LLM_MODEL=...
+rm -rf doc_cache
+uv run python main.py phase3
+# read BATTLE DIAGNOSTICS
+uv run python main.py validate
 ```
 
-### Боевой день (private dataset)
+Чеклист:
 
-1. Положить датасет в `DATA_DIR` (или `export DATA_DIR=...`).  
-2. `rm -rf doc_cache` при полном сбросе кэша.  
-3. `uv run python main.py phase3`.  
-4. Проверить, что все ключи `answers` заполнены (не `null` status).  
-5. Сдать `submission.json`.
+1. `cells filled` = expected  
+2. `unknown formulas` / `low confidence` — зона LLM  
+3. `bad extracts` / missing loan|notes  
+4. validate exit 0  
+5. `MODEL_LABEL` в submission корректен  
+
+### Hybrid policy (кратко)
+
+1. Always det  
+2. Strong known formula → det only  
+3. Unknown/low-conf + key → Formula Reader + code compute  
+4. Mismatch: known → det; unknown → LLM compute  
+5. API fail → det  
+
+Не гонять все 36 ячеек через LLM на free tier — default policy уже режет лишние вызовы.
 
 ---
 
 ## Кэш документов
 
-- Каталог: `DOC_CACHE_DIR` (default `./doc_cache`).  
-- Ключ: `md5(abs_path:size:mtime_ns)`.  
-- После правки extractors: удалить кэш или `force=True` в `read_pdf_with_cache`.
+- `DOC_CACHE_DIR` (default `./doc_cache`)  
+- key includes extract quality version  
 
 ```bash
-rm -rf doc_cache
+rm -rf doc_cache   # new dataset / extract changes
 ```
 
 ---
 
 ## Отладка
 
-| Симптом | Что проверить |
-|---------|----------------|
-| 0 related-party | KYC OCR, threshold, `L.L.P.` / quotes в ownership |
-| Group Capex = borrower only | consolidated FS в `documents/`, segment name = company |
-| Reclass не применился | final AUP vs draft intermediate |
-| evidence ≠ GT | `_find_evidence_for_sum`, reclass txn order |
-| Медленный eval | OCR на каждом KYC (~1–2 мин на 12 сценариев) |
-
-Полезный ad-hoc:
-
-```bash
-uv run python -c "
-from agent.tools.metrics import extract_scenario_metrics
-from agent.tools.ledger import load_ledger, transactions_for_account
-m = extract_scenario_metrics(
-    scenario_id='P5', account_id='ACC-7805',
-    transactions=transactions_for_account(load_ledger(), 'ACC-7805'),
-    notes_paths=['agentic-bank-public/documents/ea8d8bac3e62.pdf'],
-    kyc_paths=['agentic-bank-public/documents/89af6ae7964f.pdf'],
-    company_name='Ekibastuz Power Services JSC',
-)
-print(m.summary_for_llm())
-"
-```
+| Симптом | Проверить |
+|---------|-----------|
+| null status/actual | `ensure_filled_*`, validate |
+| degraded PDF | `diagnostics.bad_extracts` |
+| Group Capex off | consolidated PPE + company name |
+| Adj EBITDA margin | OCR one-time + $300k materiality |
+| NaN amount | notes/treasury; battle missing amounts |
+| LLM length / 500 | shorter text clip; det backup |
+| mismatch LLM vs det | expected on some overhead formulas; det wins if known |
 
 ---
 
-## Добавление зависимости
+## Архив LLM-smoke
 
-```bash
-uv add package-name
-uv lock
-uv sync
-# обновить frozen requirements (опционально)
-uv export --no-dev --no-hashes -o requirements.txt
-```
+Исторические отчёты (без ключей):  
+`archive/gemini-llm-probe-20260806/` — P1/P4 + hard P3/P5/P7/B1.

@@ -1,4 +1,4 @@
-"""Disk-backed PDF extraction cache (Master Plan §5.1)."""
+"""Disk-backed PDF extraction cache."""
 
 from __future__ import annotations
 
@@ -13,6 +13,13 @@ from agent.models import ExtractedDocument
 
 _doc_cache: Optional[Cache] = None
 
+# Must change when extract quality logic / backend selection changes,
+# so old len(text)>=40 cache entries are not reused silently.
+try:
+    from agent.tools.pdf_extract import EXTRACT_QUALITY_VERSION as _EQ_VER
+except Exception:  # noqa: BLE001
+    _EQ_VER = "q0"
+
 
 def get_cache(directory: str | Path | None = None) -> Cache:
     global _doc_cache
@@ -24,11 +31,13 @@ def get_cache(directory: str | Path | None = None) -> Cache:
 
 
 def get_file_key(file_path: str | Path) -> str:
-    """Content-identity key: hash of the bytes.
+    """Content-identity key: hash of the bytes + extract quality version.
 
     Keyed on content rather than path+mtime so that copying the dataset to
     another machine — which is exactly what happens on competition day — reuses
     the cache instead of silently invalidating all of it (audit finding O4).
+    The quality version is still folded in so that improving the extraction
+    logic invalidates stale entries rather than reusing an old bad extract.
     """
     path = Path(file_path)
     if not path.exists():
@@ -37,6 +46,7 @@ def get_file_key(file_path: str | Path) -> str:
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
+    digest.update(f":eq={_EQ_VER}".encode())
     return digest.hexdigest()
 
 
