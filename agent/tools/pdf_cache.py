@@ -1,4 +1,4 @@
-"""Disk-backed PDF extraction cache (Master Plan §5.1)."""
+"""Disk-backed PDF extraction cache."""
 
 from __future__ import annotations
 

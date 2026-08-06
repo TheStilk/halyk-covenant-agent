@@ -25,10 +25,9 @@
 | Документ | О чём |
 |----------|--------|
 | [README.md](README.md) (этот файл) | Быстрый старт, обзор, команды |
-| [docs/architecture.md](docs/architecture.md) | Пайплайн, hardening, formulas, diagnostics |
+| [docs/architecture.md](docs/architecture.md) | Пайплайн, formulas, LLM env, diagnostics |
 | [docs/usage.md](docs/usage.md) | CLI, env, battle diagnostics, validate |
 | [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, taxonomy, scoring |
-| [PLAN.md](PLAN.md) | Master Plan (единственный source of truth по ТЗ) |
 
 ---
 
@@ -100,7 +99,6 @@ PDF (opaque hashes) + master_ledger_2025.csv
 
 ```
 hakaton/
-├── PLAN.md                 # Master Plan (ТЗ)
 ├── README.md
 ├── docs/                   # подробная документация
 ├── pyproject.toml          # зависимости (uv)
@@ -113,7 +111,7 @@ hakaton/
 │   ├── models.py           # Pydantic-схемы
 │   ├── state.py            # LangGraph AgentState
 │   ├── graph.py            # граф: load → classify → … → collect
-│   ├── prompts/system.py   # боевые промпты §6
+│   ├── prompts/system.py   # боевые промпты
 │   ├── nodes/              # ноды графа
 │   └── tools/              # ledger, pdf, metrics, formulas, llm
 ├── scripts/
@@ -171,7 +169,7 @@ LLM_MODEL=provider/model-id
 | `MODEL_LABEL` | строка в `submission.json` |
 
 Без ключа пайплайн не падает — det formula engine.  
-Исторические ограничения хакатона по моделям — в [PLAN.md](PLAN.md); операционный конфиг — `.env`.
+Конфиг модели — только `.env` (см. `.env.example`).
 
 ---
 

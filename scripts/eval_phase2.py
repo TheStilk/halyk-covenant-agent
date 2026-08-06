@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def cell_score(pred: dict, truth: dict) -> dict:
-    """Score one cell 0..1 per Master Plan §2."""
+    """Score one cell 0..1 (status 0.5 + actual 0.3 + evidence 0.2)."""
     if not pred or pred.get("status") is None:
         return {"total": 0.0, "status": 0.0, "actual": 0.0, "evidence": 0.0}
 

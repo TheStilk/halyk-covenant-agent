@@ -94,7 +94,7 @@ Phase 2/3 — полный граф до `collect_results`.
 
 ### `agent/prompts/system.py`
 
-Боевые промпты Master Plan §6.
+Боевые промпты (`agent/prompts/system.py`).
 
 ---
 
