@@ -36,6 +36,7 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
     company_to_scenario = _build_company_to_scenario(pdfs, account_to_scenario)
 
     type_counts: dict[str, int] = defaultdict(int)
+    bad_extracts: list[dict[str, Any]] = []
 
     for pdf_path in tqdm(pdfs, desc="classify PDFs", unit="pdf"):
         try:
@@ -43,7 +44,33 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
             text = extracted.text or ""
         except Exception as exc:  # noqa: BLE001
             print(f"[classify] extract failed {pdf_path.name}: {exc}")
+            bad_extracts.append(
+                {
+                    "path": str(pdf_path),
+                    "reason": f"exception: {exc}",
+                    "method": "exception",
+                }
+            )
             continue
+
+        meta = extracted.meta or {}
+        quality = meta.get("quality") or {}
+        quality_ok = bool(meta.get("quality_accepted", quality.get("ok", True)))
+        degraded = bool(meta.get("degraded")) or extracted.method in {
+            "failed",
+            "failed+degraded",
+        } or str(extracted.method).endswith("+degraded")
+
+        if degraded or not quality_ok or not text.strip():
+            bad_extracts.append(
+                {
+                    "path": str(pdf_path),
+                    "method": extracted.method,
+                    "text_len": len(text),
+                    "quality": quality,
+                    "errors": meta.get("extract_errors") or [],
+                }
+            )
 
         classification = classify_document(
             text,
@@ -61,6 +88,8 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
         entry["page_count"] = extracted.page_count
         entry["extract_method"] = extracted.method
         entry["text_len"] = len(text)
+        entry["extract_quality_ok"] = quality_ok and not degraded
+        entry["extract_quality"] = quality
         doc_index.append(entry)
         type_counts[classification.doc_type.value] += 1
 
@@ -77,10 +106,28 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
 
     print(f"[classify] total={len(doc_index)} by_type={dict(type_counts)}")
     print(f"[classify] scenarios_with_docs={sorted(docs_by_scenario_plain.keys())}")
+    if bad_extracts:
+        print(
+            f"[classify] WARNING bad/degraded extracts: {len(bad_extracts)} "
+            f"(see diagnostics['bad_extracts'])"
+        )
+        for item in bad_extracts[:8]:
+            q = item.get("quality") or {}
+            print(
+                f"  - {Path(item['path']).name}: method={item.get('method')} "
+                f"score={q.get('score')} reasons={q.get('reasons')}"
+            )
+        if len(bad_extracts) > 8:
+            print(f"  ... and {len(bad_extracts) - 8} more")
+
+    diagnostics = dict(state.get("diagnostics") or {})
+    diagnostics["bad_extracts"] = bad_extracts
+    diagnostics["bad_extract_count"] = len(bad_extracts)
 
     return {
         "doc_index": doc_index,
         "docs_by_scenario": docs_by_scenario_plain,
+        "diagnostics": diagnostics,
         "stage": "docs_classified",
         "error": None,
     }

@@ -77,11 +77,76 @@ class FinalCovenantResult(BaseModel):
     reasoning: str = ""
 
     def to_submission_cell(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "actual": round(abs(float(self.actual)), 2),
-            "evidence_txn_id": self.evidence_txn_id,
-        }
+        return ensure_filled_cell(
+            {
+                "status": self.status,
+                "actual": self.actual,
+                "evidence_txn_id": self.evidence_txn_id,
+            }
+        )
+
+
+def ensure_filled_cell(cell: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Guarantee a submission cell has non-null status/actual (best-effort).
+
+    - status: COMPLIANT|BREACH only; anything else → BREACH (cannot prove compliance)
+    - actual: number >= 0, rounded to 2 decimals; missing/invalid → 0.0
+    - evidence_txn_id: non-empty str or null
+    """
+    src = cell if isinstance(cell, dict) else {}
+    status = src.get("status")
+    if status not in ("COMPLIANT", "BREACH"):
+        status = "BREACH"
+
+    raw_actual = src.get("actual")
+    try:
+        if raw_actual is None:
+            actual = 0.0
+        else:
+            actual = abs(float(raw_actual))
+            if actual != actual:  # NaN
+                actual = 0.0
+    except (TypeError, ValueError):
+        actual = 0.0
+    if actual < 0:
+        actual = 0.0
+
+    evidence = src.get("evidence_txn_id")
+    if evidence is not None:
+        if not isinstance(evidence, str) or not evidence.strip():
+            evidence = None
+        elif evidence.strip().lower() in {"null", "none", "n/a"}:
+            evidence = None
+        else:
+            evidence = evidence.strip()
+
+    return {
+        "status": status,
+        "actual": round(float(actual), 2),
+        "evidence_txn_id": evidence,
+    }
+
+
+def ensure_filled_answers(
+    answers: dict[str, dict[str, Any]],
+    *,
+    covenant_ids: tuple[str, ...] | list[str],
+    scenario_ids: Optional[list[str]] = None,
+) -> dict[str, dict[str, Any]]:
+    """Fill every scenario×covenant cell so status/actual are never null."""
+    scenarios = scenario_ids if scenario_ids is not None else list(answers.keys())
+    out: dict[str, dict[str, Any]] = {}
+    for sc in scenarios:
+        sc_map = answers.get(sc) if isinstance(answers.get(sc), dict) else {}
+        out[sc] = {}
+        # Keep template covenant ids; also preserve any extra already present
+        ids = list(covenant_ids)
+        for cid in sc_map:
+            if cid not in ids:
+                ids.append(cid)
+        for cid in ids:
+            out[sc][cid] = ensure_filled_cell(sc_map.get(cid))
+    return out
 
 
 class ExtractedDocument(BaseModel):

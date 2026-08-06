@@ -8,6 +8,7 @@ Per Master Plan §7 step 1 and CASE description:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -111,14 +112,25 @@ def transactions_for_account(ledger: pd.DataFrame, account_id: str) -> list[dict
     return records
 
 
+def _is_noise_account(account_id: str) -> bool:
+    """Open-set noise convention ACC-9xxx; do not require ACC-7* borrowers."""
+    m = re.match(r"ACC-(\d+)$", str(account_id).upper())
+    if not m:
+        return False
+    return m.group(1).startswith("9")
+
+
 def scenario_to_account(account_to_scenario: dict[str, str]) -> dict[str, str]:
-    """Invert mapping: scenario_id → account_id (one-to-one for borrowers)."""
+    """Invert mapping: scenario_id → account_id (one-to-one for borrowers).
+
+    Preference when multiple accounts map to one scenario:
+      non-noise (not ACC-9xxx) over noise — not hard-coded to ACC-7*.
+    """
     inverted: dict[str, str] = {}
     for acc, sc in account_to_scenario.items():
         if sc in inverted and inverted[sc] != acc:
-            # Prefer ACC-7xxx borrower accounts over noise ACC-9xxx
             existing = inverted[sc]
-            if acc.startswith("ACC-7") and not existing.startswith("ACC-7"):
+            if not _is_noise_account(acc) and _is_noise_account(existing):
                 inverted[sc] = acc
             continue
         inverted[sc] = acc

@@ -13,6 +13,13 @@ from agent.models import ExtractedDocument
 
 _doc_cache: Optional[Cache] = None
 
+# Must change when extract quality logic / backend selection changes,
+# so old len(text)>=40 cache entries are not reused silently.
+try:
+    from agent.tools.pdf_extract import EXTRACT_QUALITY_VERSION as _EQ_VER
+except Exception:  # noqa: BLE001
+    _EQ_VER = "q0"
+
 
 def get_cache(directory: str | Path | None = None) -> Cache:
     global _doc_cache
@@ -24,12 +31,12 @@ def get_cache(directory: str | Path | None = None) -> Cache:
 
 
 def get_file_key(file_path: str | Path) -> str:
-    """Stable content-identity key: resolved path + size + mtime_ns."""
+    """Stable content-identity key: path + size + mtime + extract quality version."""
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     stat = path.stat()
-    raw = f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+    raw = f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:eq={_EQ_VER}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
