@@ -24,7 +24,7 @@ def run_scenarios(scenario_ids: list[str], *, use_llm: bool = False) -> dict:
         scenario_to_account,
         transactions_for_account,
     )
-    from agent.config import COVENANT_IDS, GROUND_TRUTH_PATH
+    from agent.config import GROUND_TRUTH_PATH, covenant_ids_for_scenario
 
     print("=== Running foundation (classify + covenants) ===")
     state = run_foundation()
@@ -53,7 +53,7 @@ def run_scenarios(scenario_ids: list[str], *, use_llm: bool = False) -> dict:
         print(f"\n{'='*70}\nSCENARIO {sc}  account={acc}")
         print(metrics.summary_for_llm())
         cov_map = covenants_by.get(sc) or {}
-        for cid in COVENANT_IDS:
+        for cid in covenant_ids_for_scenario(sc):
             text = cov_map.get(cid, "")
             verdict = analyze_one_covenant(
                 scenario_id=sc,
@@ -111,7 +111,7 @@ def run_scenarios(scenario_ids: list[str], *, use_llm: bool = False) -> dict:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("scenarios", nargs="*", default=["P1", "P5"])
-    p.add_argument("--llm", action="store_true", help="Enable Qwen (needs API key)")
+    p.add_argument("--llm", action="store_true", help="Enable LLM paths (needs LLM_* env)")
     args = p.parse_args()
     run_scenarios(args.scenarios, use_llm=args.llm)
     return 0

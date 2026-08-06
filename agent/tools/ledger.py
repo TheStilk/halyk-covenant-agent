@@ -1,13 +1,13 @@
 """Ledger loading and account_id → scenario_id mapping.
 
-Per Master Plan §7 step 1 and CASE description:
-  txn_id always starts with scenario_id of the borrower whose account holds it.
+txn_id always starts with scenario_id of the borrower whose account holds it.
   Example: TXN-P1-0007 → scenario_id = P1, account_id = ACC-7801
   Example: TXN-P10-0062 → scenario_id = P10 (second hyphen segment)
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -111,30 +111,26 @@ def transactions_for_account(ledger: pd.DataFrame, account_id: str) -> list[dict
     return records
 
 
-def scenario_to_account(
-    account_to_scenario: dict[str, str],
-    ledger: pd.DataFrame | None = None,
-) -> dict[str, str]:
+def _is_noise_account(account_id: str) -> bool:
+    """Open-set noise convention ACC-9xxx; do not require ACC-7* borrowers."""
+    m = re.match(r"ACC-(\d+)$", str(account_id).upper())
+    if not m:
+        return False
+    return m.group(1).startswith("9")
+
+
+def scenario_to_account(account_to_scenario: dict[str, str]) -> dict[str, str]:
     """Invert mapping: scenario_id → account_id (one-to-one for borrowers).
 
-    When two accounts claim the same scenario, the borrower's own account is the
-    one actually holding that scenario's transactions, so ties break on volume.
-    The previous rule preferred the "ACC-7" prefix, which is a numbering quirk
-    of the public dataset rather than a property of the task (audit finding C4).
+    Preference when multiple accounts map to one scenario:
+      non-noise (not ACC-9xxx) over noise — not hard-coded to ACC-7*.
     """
-    counts: dict[str, int] = {}
-    if ledger is not None and "account_id" in ledger.columns:
-        counts = ledger["account_id"].astype(str).value_counts().to_dict()
-
     inverted: dict[str, str] = {}
     for acc, sc in account_to_scenario.items():
-        existing = inverted.get(sc)
-        if existing is None:
-            inverted[sc] = acc
+        if sc in inverted and inverted[sc] != acc:
+            existing = inverted[sc]
+            if not _is_noise_account(acc) and _is_noise_account(existing):
+                inverted[sc] = acc
             continue
-        if existing == acc:
-            continue
-        # Deterministic tie-break: more transactions wins, then lexical order.
-        if (counts.get(acc, 0), acc) > (counts.get(existing, 0), existing):
-            inverted[sc] = acc
+        inverted[sc] = acc
     return inverted

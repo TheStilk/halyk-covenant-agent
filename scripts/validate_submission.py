@@ -117,25 +117,27 @@ def validate_submission(
                 if k not in cell:
                     errors.append(f"{path}: missing field {k!r}")
 
-            # 7. No null in status/actual
+            # 7. No null in status/actual (hard fail — empty cells forbidden)
             status = cell.get("status")
             actual = cell.get("actual")
             evidence = cell.get("evidence_txn_id")
 
-            if status is None:
-                errors.append(f"{path}.status is null (must be COMPLIANT or BREACH)")
+            if "status" not in cell or status is None:
+                errors.append(f"{path}.status is null/missing (must be COMPLIANT or BREACH)")
             elif not isinstance(status, str) or status not in ALLOWED_STATUS:
                 # 4. status enum
                 errors.append(
                     f"{path}.status must be one of {sorted(ALLOWED_STATUS)} (got {status!r})"
                 )
 
-            if actual is None:
-                errors.append(f"{path}.actual is null (must be a number >= 0)")
+            if "actual" not in cell or actual is None:
+                errors.append(f"{path}.actual is null/missing (must be a number >= 0)")
             else:
                 # 5. actual number >= 0
                 if isinstance(actual, bool) or not isinstance(actual, (int, float)):
                     errors.append(f"{path}.actual must be a number (got {type(actual).__name__})")
+                elif isinstance(actual, float) and actual != actual:  # NaN
+                    errors.append(f"{path}.actual is NaN (must be a finite number >= 0)")
                 elif actual < 0:
                     errors.append(f"{path}.actual must be >= 0 (got {actual})")
                 else:

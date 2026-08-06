@@ -1,7 +1,7 @@
 """PDF document classifier: loan_agreement / financial_notes / kyc / junk.
 
 Primary path is a fast rule-based classifier (deterministic, free).
-Optional Gemini Flash path when CLASSIFY_USE_LLM=true or rules are ambiguous.
+Optional LLM path when CLASSIFY_USE_LLM=true or rules are ambiguous.
 """
 
 from __future__ import annotations
@@ -12,7 +12,11 @@ from typing import Optional
 
 from agent.config import CLASSIFY_USE_LLM, PDF_TEXT_PREVIEW_CHARS
 from agent.models import DocClassification, DocType
-from agent.tools.pdf_extract import find_account_ids, find_company_names
+from agent.tools.pdf_extract import (
+    find_account_ids,
+    find_company_names,
+    prefer_borrower_account,
+)
 
 # ---------------------------------------------------------------------------
 # Strong signal patterns (order matters for scoring)
@@ -115,32 +119,7 @@ def _score(patterns: list[re.Pattern[str]], text: str, weight: float = 1.0) -> f
     return sum(weight for p in patterns if p.search(text))
 
 
-def _pick_account(
-    accounts: list[str],
-    account_to_scenario: Optional[dict[str, str]],
-) -> Optional[str]:
-    """Choose the borrower account among all ids mentioned in a document.
-
-    A document naming several accounts (borrower + counterparties) belongs to
-    the one the submission asks about. Falling back to the "ACC-7" prefix, as
-    the previous version did, encodes a numbering quirk of the public dataset
-    rather than a rule of the task (audit finding C4).
-    """
-    if not accounts:
-        return None
-    if account_to_scenario:
-        for acc in accounts:
-            if acc in account_to_scenario:
-                return acc
-    return accounts[0]
-
-
-def classify_text_rules(
-    text: str,
-    path: str = "",
-    *,
-    account_to_scenario: Optional[dict[str, str]] = None,
-) -> DocClassification:
+def classify_text_rules(text: str, path: str = "") -> DocClassification:
     """Rule-based document classification from full or partial text."""
     head = text[:12000]  # enough for headers + early body
     head_lower_zone = text[:4000]
@@ -190,7 +169,9 @@ def classify_text_rules(
 
     accounts = find_account_ids(text)
     companies = find_company_names(text)
-    account_id = _pick_account(accounts, account_to_scenario)
+
+    # Prefer mapped borrowers / non-noise accounts (not hard-coded ACC-7*)
+    account_id: Optional[str] = prefer_borrower_account(accounts)
 
     return DocClassification(
         path=path,
@@ -210,8 +191,17 @@ def classify_document(
     use_llm: Optional[bool] = None,
     account_to_scenario: Optional[dict[str, str]] = None,
 ) -> DocClassification:
-    """Classify a document; optionally fall back to Gemini for low confidence."""
-    result = classify_text_rules(text, path=path, account_to_scenario=account_to_scenario)
+    """Classify a document; optionally fall back to LLM for low confidence."""
+    result = classify_text_rules(text, path=path)
+
+    # Re-rank account using ledger mapping when available
+    if account_to_scenario:
+        accounts = find_account_ids(text)
+        preferred = prefer_borrower_account(
+            accounts, account_to_scenario=account_to_scenario
+        )
+        if preferred:
+            result.account_id = preferred
 
     if account_to_scenario and result.account_id:
         result.scenario_id = account_to_scenario.get(result.account_id)
@@ -241,13 +231,13 @@ def classify_document(
 
 
 def classify_text_llm(text: str, path: str = "") -> DocClassification:
-    """Gemini Flash classification (Master Plan §6.4)."""
+    """Optional LLM classification (CLASSIFY_* or primary LLM_*)."""
     from agent.prompts.system import DOC_CLASSIFY_PROMPT
-    from agent.tools.llm import get_gemini
+    from agent.tools.llm import get_classify_model
 
     preview = text[:PDF_TEXT_PREVIEW_CHARS]
     prompt = DOC_CLASSIFY_PROMPT.format(text=preview)
-    llm = get_gemini(temperature=0.0)
+    llm = get_classify_model(temperature=0.0)
     raw = llm.invoke(prompt)
     content = raw.content if hasattr(raw, "content") else str(raw)
     label = str(content).strip().lower()
@@ -267,7 +257,7 @@ def classify_text_llm(text: str, path: str = "") -> DocClassification:
 
     accounts = find_account_ids(text)
     companies = find_company_names(text)
-    account_id = _pick_account(accounts, None)
+    account_id = prefer_borrower_account(accounts)
 
     return DocClassification(
         path=path,

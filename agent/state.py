@@ -1,4 +1,4 @@
-"""LangGraph AgentState (Master Plan §4)."""
+"""LangGraph AgentState."""
 
 from __future__ import annotations
 
@@ -29,6 +29,9 @@ class AgentState(TypedDict, total=False):
     doc_index: list[dict]  # list of classification dicts
     docs_by_scenario: dict[str, dict[str, list[str]]]  # scenario → type → paths
     extraction_preflight: dict  # what could not be read, and why (audit C2)
+
+    # Battle / quality diagnostics (bad extracts, unknown formulas, …)
+    diagnostics: dict[str, Any]
 
     # Results (reducer: append)
     results: Annotated[list[FinalCovenantResult], operator.add]

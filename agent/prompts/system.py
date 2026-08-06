@@ -1,4 +1,4 @@
-"""Battle-tested prompts from Master Plan §6."""
+"""Battle-tested system / user prompts for covenant analysis."""
 
 SYSTEM_PROMPT = """You are a highly precise Financial Covenant Monitoring Agent specializing in loan agreements, financial ratios, and transaction analysis.
 
