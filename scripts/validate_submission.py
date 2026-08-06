@@ -22,6 +22,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from agent.console import setup_console  # noqa: E402
+
+setup_console()
+
 ALLOWED_STATUS = frozenset({"COMPLIANT", "BREACH"})
 REQUIRED_TOP = ("team", "contact_email", "model", "answers")
 REQUIRED_CELL = ("status", "actual", "evidence_txn_id")
