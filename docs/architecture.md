@@ -20,7 +20,7 @@ extract_covenants    # loan → template covenant ids (fallback Article N)
 extract_metrics      # notes + KYC + ledger → ScenarioMetrics
   │
   ▼
-analyze_covenants    # formula engine → unknown best-effort → optional Qwen
+analyze_covenants    # formula engine → unknown best-effort → optional LLM
   │
   ▼
 collect_results      # ensure_filled cells → documents["submission_answers"]
@@ -77,7 +77,7 @@ Phase 2/3 — полный граф до `collect_results`.
 | `metrics.py` | KYC, AUP, taxonomy, FX, NaN fills, Group Capex, Adj EBITDA |
 | `formula_engine.py` | known formulas + unknown best-effort |
 | `battle_diagnostics.py` | сводка cells / unknown / bad extracts / time |
-| `llm.py` | Qwen + Gemini factories |
+| `llm.py` | OpenAI-compatible client (`LLM_*` env) |
 
 ### `agent/models.py` — схемы
 
@@ -187,10 +187,11 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 `analyze_one_covenant`:
 
 1. `evaluate_covenant` (known high-conf **без** LLM)  
-2. Unknown / low conf **и** `QWEN_API_KEY` → Qwen structured  
-3. Reflection если conf всё ещё &lt; `CONFIDENCE_THRESHOLD`  
+2. При `LLM_*` + `USE_LLM_FORMULA_READER` → FormulaSpec (LLM) + compute (code), cross-check с det  
+3. Unknown / low conf → optional structured verdict / reflection  
 4. Без ключа — det best-effort, ячейка всё равно заполнена  
 
+Модель **не зашита** в логику: только `LLM_MODEL` / `MODEL_LABEL`.  
 Open set: 100% на formula engine без ключей.
 
 ---

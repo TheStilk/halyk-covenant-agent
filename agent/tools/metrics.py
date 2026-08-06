@@ -136,7 +136,7 @@ class ScenarioMetrics:
         return d
 
     def summary_for_llm(self) -> str:
-        """Compact metrics block for Qwen user prompt."""
+        """Compact metrics block for LLM prompts."""
         lines = [
             f"scenario_id: {self.scenario_id}",
             f"account_id: {self.account_id}",

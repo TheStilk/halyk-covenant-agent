@@ -1,4 +1,4 @@
-"""Covenant analysis node: formula engine + Qwen 3.8-Max structured output + reflection."""
+"""Covenant analysis node: formula engine + optional LLM formula reader / reflection."""
 
 from __future__ import annotations
 
@@ -298,7 +298,7 @@ def analyze_one_covenant(
         f"(unknown={unknown} conf={det.confidence:.2f})"
     )
     try:
-        llm_verdict = _qwen_analyze(
+        llm_verdict = _llm_verdict_analyze(
             scenario_id=scenario_id,
             account_id=account_id,
             covenant_id=covenant_id,
@@ -321,7 +321,7 @@ def analyze_one_covenant(
 
     if chosen.confidence < CONFIDENCE_THRESHOLD and is_llm_available():
         try:
-            reflected = _qwen_reflect(
+            reflected = _llm_reflect(
                 previous=chosen,
                 covenant_text=covenant_text,
                 metrics=metrics,
@@ -344,7 +344,7 @@ def analyze_one_covenant_deterministic(
     return evaluate_covenant(covenant_text, metrics, covenant_id=covenant_id)
 
 
-def _qwen_analyze(
+def _llm_verdict_analyze(
     *,
     scenario_id: str,
     account_id: str,
@@ -352,9 +352,9 @@ def _qwen_analyze(
     covenant_text: str,
     metrics: ScenarioMetrics,
 ) -> CovenantVerdict:
-    from agent.tools.llm import get_qwen, invoke_with_system
+    from agent.tools.llm import get_llm, invoke_with_system
 
-    llm = get_qwen(temperature=0.0)
+    llm = get_llm(temperature=0.0)
     structured = llm.with_structured_output(CovenantVerdict)
 
     # Provide compact transaction list
@@ -390,16 +390,16 @@ def _qwen_analyze(
         return _parse_verdict_json(content)
 
 
-def _qwen_reflect(
+def _llm_reflect(
     *,
     previous: CovenantVerdict,
     covenant_text: str,
     metrics: ScenarioMetrics,
 ) -> CovenantVerdict:
-    from agent.tools.llm import get_qwen
+    from agent.tools.llm import get_llm
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    llm = get_qwen(temperature=0.0)
+    llm = get_llm(temperature=0.0)
     structured = llm.with_structured_output(CovenantVerdict)
     prompt = REFLECTION_PROMPT.format(
         previous_json=previous.model_dump_json(),

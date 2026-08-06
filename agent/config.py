@@ -32,43 +32,60 @@ CONTACT_EMAIL = os.getenv(
 )
 # ---------------------------------------------------------------------------
 # LLM — provider-agnostic OpenAI-compatible endpoint
-# Change only env to switch provider (OpenRouter, proxy, unofficial, …).
+# Swap model/provider ONLY via env (no code edits, no vendor roles in logic).
+#
+#   LLM_API_KEY=...
+#   LLM_BASE_URL=https://any-compatible-host/v1
+#   LLM_MODEL=provider/model-id
+#   MODEL_LABEL=...   # optional; defaults to LLM_MODEL for submission.json
+#
+# Legacy aliases still accepted: OPENAI_API_KEY, QWEN_*, OPENAI_BASE_URL.
 # ---------------------------------------------------------------------------
-# Primary knobs (preferred):
-#   LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-# Backward-compatible aliases:
-#   QWEN_API_KEY / OPENAI_API_KEY, QWEN_BASE_URL / OPENAI_BASE_URL, QWEN_MODEL
 LLM_API_KEY = (
     os.getenv("LLM_API_KEY")
-    or os.getenv("QWEN_API_KEY")
     or os.getenv("OPENAI_API_KEY")
+    or os.getenv("QWEN_API_KEY")
     or ""
 )
 LLM_BASE_URL = (
     os.getenv("LLM_BASE_URL")
-    or os.getenv("QWEN_BASE_URL")
     or os.getenv("OPENAI_BASE_URL")
-    or "https://openrouter.ai/api/v1"
+    or os.getenv("QWEN_BASE_URL")
+    or ""
 )
 LLM_MODEL = (
     os.getenv("LLM_MODEL")
+    or os.getenv("OPENAI_MODEL")
     or os.getenv("QWEN_MODEL")
-    or "qwen/qwen3.5-max"
+    or ""
 )
 LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "60"))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
 
-# Legacy aliases (same values) for older imports
+# Field `model` in submission.json — single source of truth
+MODEL_LABEL = (os.getenv("MODEL_LABEL") or LLM_MODEL or "deterministic-formula-engine").strip()
+
+# Optional second OpenAI-compatible endpoint for PDF classify only.
+# If unset, CLASSIFY_USE_LLM reuses the primary LLM_* client.
+CLASSIFY_API_KEY = (
+    os.getenv("CLASSIFY_API_KEY")
+    or os.getenv("GOOGLE_API_KEY")
+    or os.getenv("GEMINI_API_KEY")
+    or ""
+)
+CLASSIFY_BASE_URL = os.getenv("CLASSIFY_BASE_URL") or LLM_BASE_URL
+CLASSIFY_MODEL = (
+    os.getenv("CLASSIFY_MODEL")
+    or os.getenv("GEMINI_MODEL")
+    or LLM_MODEL
+)
+
+# Legacy aliases (same objects) so old imports do not break
 QWEN_API_KEY = LLM_API_KEY
 QWEN_BASE_URL = LLM_BASE_URL
 QWEN_MODEL = LLM_MODEL
-
-# Optional Gemini Flash (doc classify only — not required for formula reader)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.0-flash")
-
-# Label written into submission.json (single place — override via MODEL_LABEL)
-MODEL_LABEL = os.getenv("MODEL_LABEL", "qwen3.8-max + gemini-3.6-flash")
+GOOGLE_API_KEY = CLASSIFY_API_KEY
+GEMINI_MODEL = CLASSIFY_MODEL
 
 # ---------------------------------------------------------------------------
 # Runtime knobs

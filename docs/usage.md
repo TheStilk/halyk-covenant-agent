@@ -32,20 +32,25 @@ sudo apt install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
 | `CONTACT_EMAIL` | `serkebaevmadiyar09@gmail.com, zhenis415@gmail.com` | поле submission (обе почты команды) |
 | `DATA_DIR` | `./agentic-bank-public` | датасет |
 | `DOC_CACHE_DIR` | `./doc_cache` | кэш PDF |
-| `LLM_API_KEY` | — | OpenAI-compatible key (или `QWEN_API_KEY` / `OPENAI_API_KEY`) |
-| `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | любой OpenAI-compatible `/v1` |
-| `LLM_MODEL` | `qwen/qwen3.5-max` | slug модели у провайдера |
-| `USE_LLM_FORMULA_READER` | `true` | LLM читает формулу → code считает |
-| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | при расхождении с det → det |
-| `GOOGLE_API_KEY` | — | optional Gemini classify |
-| `CLASSIFY_USE_LLM` | `false` | Gemini для ambiguous PDF |
-| `CONFIDENCE_THRESHOLD` | `0.85` | порог reflection / low-conf |
-| `MODEL_LABEL` | `qwen3.8-max + gemini-3.6-flash` | поле `model` в submission |
+| `LLM_API_KEY` | — | ключ OpenAI-compatible API |
+| `LLM_BASE_URL` | — | `https://host/v1` (любой провайдер) |
+| `LLM_MODEL` | — | id модели у провайдера |
+| `MODEL_LABEL` | =`LLM_MODEL` | поле `model` в submission |
+| `CLASSIFY_API_KEY` / `BASE_URL` / `MODEL` | optional | отдельная модель для classify |
+| `USE_LLM_FORMULA_READER` | `true` | LLM → formula_spec, code → actual |
+| `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | mismatch → det engine |
+| `CLASSIFY_USE_LLM` | `false` | LLM для ambiguous PDF |
+| `CONFIDENCE_THRESHOLD` | `0.85` | low-conf / reflection |
 
-Смена провайдера: только `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` — без правок кода.
+**Смена модели:** правьте только env — не код и не «роли» vendor’ов.
 
 ```bash
-uv run python scripts/smoke_llm.py   # available / unavailable
+# пример
+export LLM_API_KEY=...
+export LLM_BASE_URL=https://openrouter.ai/api/v1
+export LLM_MODEL=your/model-id
+
+uv run python scripts/smoke_llm.py
 ```
 
 ---
@@ -81,7 +86,7 @@ time total: ~100s
 {
   "team": "...",
   "contact_email": "...",
-  "model": "qwen3.8-max + gemini-3.6-flash",
+  "model": "<MODEL_LABEL or LLM_MODEL>",
   "answers": {
     "P1": {
       "6.1": { "status": "BREACH", "actual": 0.46, "evidence_txn_id": null },
@@ -177,7 +182,7 @@ uv run python scripts/eval_phase2.py --scenarios P4
 
 ```bash
 export DATA_DIR=/path/to/private-dataset
-# optional: export QWEN_API_KEY=...   # unknown-formula LLM fallback
+# optional: LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 rm -rf doc_cache
 uv run python main.py phase3
 # прочитать === BATTLE DIAGNOSTICS ===

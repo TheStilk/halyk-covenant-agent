@@ -161,7 +161,7 @@ OCR для image-таблиц; поддержка `"Name" LLP`, `L.L.P.`.
 {
   "team": "Сычуанский Соус",
   "contact_email": "serkebaevmadiyar09@gmail.com, zhenis415@gmail.com",
-  "model": "qwen3.8-max + gemini-3.6-flash",
+  "model": "<from MODEL_LABEL or LLM_MODEL>",
   "answers": {
     "P1": {
       "6.1": { "status": "BREACH", "actual": 0.46, "evidence_txn_id": null },

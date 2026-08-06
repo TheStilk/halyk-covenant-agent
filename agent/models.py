@@ -42,7 +42,7 @@ class CovenantText(BaseModel):
 
 
 class CovenantVerdict(BaseModel):
-    """Structured output from Qwen for a single covenant analysis."""
+    """Structured LLM output for a single covenant analysis (legacy path)."""
 
     status: Literal["COMPLIANT", "BREACH"]
     actual: float

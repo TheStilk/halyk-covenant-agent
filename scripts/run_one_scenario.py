@@ -107,7 +107,7 @@ def run_scenarios(scenario_ids: list[str], *, use_llm: bool = False) -> dict:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("scenarios", nargs="*", default=["P1", "P5"])
-    p.add_argument("--llm", action="store_true", help="Enable Qwen (needs API key)")
+    p.add_argument("--llm", action="store_true", help="Enable LLM paths (needs LLM_* env)")
     args = p.parse_args()
     run_scenarios(args.scenarios, use_llm=args.llm)
     return 0
