@@ -14,3 +14,6 @@ submission.json
 dist/
 build/
 *.egg-info/
+
+# Local secrets and probe outputs (do not commit keys)
+test_runs/
