@@ -111,15 +111,30 @@ def transactions_for_account(ledger: pd.DataFrame, account_id: str) -> list[dict
     return records
 
 
-def scenario_to_account(account_to_scenario: dict[str, str]) -> dict[str, str]:
-    """Invert mapping: scenario_id → account_id (one-to-one for borrowers)."""
+def scenario_to_account(
+    account_to_scenario: dict[str, str],
+    ledger: pd.DataFrame | None = None,
+) -> dict[str, str]:
+    """Invert mapping: scenario_id → account_id (one-to-one for borrowers).
+
+    When two accounts claim the same scenario, the borrower's own account is the
+    one actually holding that scenario's transactions, so ties break on volume.
+    The previous rule preferred the "ACC-7" prefix, which is a numbering quirk
+    of the public dataset rather than a property of the task (audit finding C4).
+    """
+    counts: dict[str, int] = {}
+    if ledger is not None and "account_id" in ledger.columns:
+        counts = ledger["account_id"].astype(str).value_counts().to_dict()
+
     inverted: dict[str, str] = {}
     for acc, sc in account_to_scenario.items():
-        if sc in inverted and inverted[sc] != acc:
-            # Prefer ACC-7xxx borrower accounts over noise ACC-9xxx
-            existing = inverted[sc]
-            if acc.startswith("ACC-7") and not existing.startswith("ACC-7"):
-                inverted[sc] = acc
+        existing = inverted.get(sc)
+        if existing is None:
+            inverted[sc] = acc
             continue
-        inverted[sc] = acc
+        if existing == acc:
+            continue
+        # Deterministic tie-break: more transactions wins, then lexical order.
+        if (counts.get(acc, 0), acc) > (counts.get(existing, 0), existing):
+            inverted[sc] = acc
     return inverted
