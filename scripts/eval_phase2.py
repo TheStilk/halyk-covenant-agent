@@ -80,7 +80,27 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
     template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
     all_sc = list(template["answers"].keys())
     if scenario_ids:
-        all_sc = [s for s in all_sc if s in scenario_ids]
+        requested = list(scenario_ids)
+        all_sc = [s for s in all_sc if s in requested]
+        if not all_sc:
+            # The frozen train/holdout split names public scenarios (B4, P10, …).
+            # Point this at a template that uses different ids — the private set
+            # will — and the selection is empty, which used to divide by zero in
+            # the summary below rather than say what went wrong.
+            print(
+                f"No scenarios to evaluate: asked for {sorted(requested)}, "
+                f"but the template has {sorted(template['answers'])}.\n"
+                "The train/holdout split in EVAL_SPLIT.md is defined over the "
+                "public scenario ids; on a different dataset use --split all "
+                "(the default) or pass --scenarios explicitly."
+            )
+            return {
+                "rows": [],
+                "total_score": 0.0,
+                "max_score": 0.0,
+                "status_ok": 0,
+                "n_cells": 0,
+            }
 
     print("=== Foundation ===")
     state = run_foundation()
