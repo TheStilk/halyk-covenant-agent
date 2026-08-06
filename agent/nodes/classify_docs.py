@@ -12,11 +12,13 @@ from agent.config import DOCUMENTS_DIR
 from agent.models import DocType
 from agent.state import AgentState
 from agent.tools.classifier import classify_document
+from agent.tools.extraction_quality import format_preflight, preflight
 from agent.tools.pdf_cache import read_pdf_with_cache
+from agent.tools.pdf_extract import extract_document, iter_documents
 
 
 def classify_docs_node(state: AgentState) -> dict[str, Any]:
-    """Read every PDF (cached), classify, bind to scenario via account_id."""
+    """Read every document (cached), classify, bind to scenario via account_id."""
     account_to_scenario = state.get("account_to_scenario") or {}
     docs_dir = DOCUMENTS_DIR
     if not docs_dir.exists():
@@ -27,7 +29,12 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
             "docs_by_scenario": {},
         }
 
-    pdfs = sorted(docs_dir.glob("*.pdf"))
+    # Say up front what cannot be read, instead of discovering it as a wrong
+    # number three stages later (audit finding C2).
+    pre = preflight(docs_dir)
+    print(format_preflight(pre))
+
+    pdfs = iter_documents(docs_dir)
     doc_index: list[dict] = []
     docs_by_scenario: dict[str, dict[str, list[str]]] = defaultdict(
         lambda: defaultdict(list)
@@ -37,13 +44,19 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
 
     type_counts: dict[str, int] = defaultdict(int)
 
-    for pdf_path in tqdm(pdfs, desc="classify PDFs", unit="pdf"):
+    unreadable: list[str] = []
+
+    for pdf_path in tqdm(pdfs, desc="classify docs", unit="doc"):
         try:
-            extracted = read_pdf_with_cache(pdf_path)
+            extracted = read_pdf_with_cache(pdf_path, extract_document)
             text = extracted.text or ""
         except Exception as exc:  # noqa: BLE001
             print(f"[classify] extract failed {pdf_path.name}: {exc}")
+            unreadable.append(pdf_path.name)
             continue
+
+        if not text.strip():
+            unreadable.append(pdf_path.name)
 
         classification = classify_document(
             text,
@@ -77,10 +90,19 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
 
     print(f"[classify] total={len(doc_index)} by_type={dict(type_counts)}")
     print(f"[classify] scenarios_with_docs={sorted(docs_by_scenario_plain.keys())}")
+    if unreadable:
+        print(f"[classify] UNREADABLE documents ({len(unreadable)}): {unreadable}")
 
     return {
         "doc_index": doc_index,
         "docs_by_scenario": docs_by_scenario_plain,
+        "extraction_preflight": {
+            "affected_documents": pre["affected_documents"],
+            "ocr_available": pre["ocr_available"],
+            "ocr_missing": pre["ocr_missing"],
+            "unreadable_content": pre["unreadable_content"],
+            "unreadable_documents": unreadable,
+        },
         "stage": "docs_classified",
         "error": None,
     }

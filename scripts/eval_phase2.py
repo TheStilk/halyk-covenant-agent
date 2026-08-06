@@ -11,6 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from agent.console import setup_console  # noqa: E402
+
+setup_console()
+
 
 def cell_score(pred: dict, truth: dict) -> dict:
     """Score one cell 0..1 per Master Plan §2."""
@@ -59,11 +63,13 @@ def cell_score(pred: dict, truth: dict) -> dict:
 
 
 def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) -> dict:
-    from agent.config import COVENANT_IDS, GROUND_TRUTH_PATH, TEMPLATE_PATH
+    from agent.config import GROUND_TRUTH_PATH, TEMPLATE_PATH
+    from agent.eval_split import split_of
     from agent.graph import run_foundation
     from agent.nodes.analyze import analyze_one_covenant
     from agent.tools.ledger import scenario_to_account, transactions_for_account
     from agent.tools.metrics import extract_metrics_for_state
+    from agent.tools.template import covenant_ids_for
 
     gt_raw = json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8"))
     gt = gt_raw.get("scenarios", gt_raw)
@@ -105,7 +111,7 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
             docs_by_scenario=docs_by,
             doc_index=doc_index,
         )
-        for cid in COVENANT_IDS:
+        for cid in covenant_ids_for(sc):
             text = (covenants_by.get(sc) or {}).get(cid, "")
             verdict = analyze_one_covenant(
                 scenario_id=sc,
@@ -146,6 +152,7 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
                 {
                     "scenario": sc,
                     "covenant": cid,
+                    "split": split_of(sc),
                     "pred": pred,
                     "truth": truth,
                     "score": sc_res,
@@ -170,6 +177,22 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
         print(f"max rel error (status-correct cells): {max_err*100:.2f}%")
     print(f"hackathon score: {total_score:.3f} / {max_score:.1f}  ({pct:.1f}%)")
 
+    # Per-split breakdown. Only the holdout number estimates anything; the train
+    # number is a fit statistic and must never be quoted as performance.
+    by_split: dict[str, list[float]] = {}
+    for r in rows:
+        by_split.setdefault(r["split"], []).append(r["score"]["total"])
+    print("\n=== BY SPLIT (see EVAL_SPLIT.md) ===")
+    for name in ("train", "holdout", "unknown"):
+        scores = by_split.get(name)
+        if not scores:
+            continue
+        label = "  <- the only number that estimates the private set" if name == "holdout" else ""
+        print(
+            f"  {name:8s} {sum(scores):6.3f} / {len(scores):3d} "
+            f"= {100 * sum(scores) / len(scores):5.1f}%{label}"
+        )
+
     # Worst cells (lowest score first)
     worst = sorted(rows, key=lambda r: r["score"]["total"])
     print("\n=== WORST CELLS ===")
@@ -192,11 +215,20 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
 
 
 def main() -> int:
+    from agent.eval_split import scenarios_for
+
     p = argparse.ArgumentParser()
     p.add_argument("--scenarios", nargs="*", default=None)
+    p.add_argument(
+        "--split",
+        choices=("train", "holdout", "all"),
+        default="all",
+        help="evaluate one side of the frozen split (see EVAL_SPLIT.md)",
+    )
     p.add_argument("--llm", action="store_true")
     args = p.parse_args()
-    run_eval(args.scenarios, use_llm=args.llm)
+    scenarios = args.scenarios or scenarios_for(args.split)
+    run_eval(scenarios, use_llm=args.llm)
     return 0
 
 

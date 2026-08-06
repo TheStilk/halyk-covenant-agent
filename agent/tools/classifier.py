@@ -115,7 +115,32 @@ def _score(patterns: list[re.Pattern[str]], text: str, weight: float = 1.0) -> f
     return sum(weight for p in patterns if p.search(text))
 
 
-def classify_text_rules(text: str, path: str = "") -> DocClassification:
+def _pick_account(
+    accounts: list[str],
+    account_to_scenario: Optional[dict[str, str]],
+) -> Optional[str]:
+    """Choose the borrower account among all ids mentioned in a document.
+
+    A document naming several accounts (borrower + counterparties) belongs to
+    the one the submission asks about. Falling back to the "ACC-7" prefix, as
+    the previous version did, encodes a numbering quirk of the public dataset
+    rather than a rule of the task (audit finding C4).
+    """
+    if not accounts:
+        return None
+    if account_to_scenario:
+        for acc in accounts:
+            if acc in account_to_scenario:
+                return acc
+    return accounts[0]
+
+
+def classify_text_rules(
+    text: str,
+    path: str = "",
+    *,
+    account_to_scenario: Optional[dict[str, str]] = None,
+) -> DocClassification:
     """Rule-based document classification from full or partial text."""
     head = text[:12000]  # enough for headers + early body
     head_lower_zone = text[:4000]
@@ -165,12 +190,7 @@ def classify_text_rules(text: str, path: str = "") -> DocClassification:
 
     accounts = find_account_ids(text)
     companies = find_company_names(text)
-
-    # Prefer ACC-7xxx (borrower) over ACC-9xxx noise if both appear
-    account_id: Optional[str] = None
-    if accounts:
-        borrower = [a for a in accounts if a.startswith("ACC-7")]
-        account_id = borrower[0] if borrower else accounts[0]
+    account_id = _pick_account(accounts, account_to_scenario)
 
     return DocClassification(
         path=path,
@@ -191,7 +211,7 @@ def classify_document(
     account_to_scenario: Optional[dict[str, str]] = None,
 ) -> DocClassification:
     """Classify a document; optionally fall back to Gemini for low confidence."""
-    result = classify_text_rules(text, path=path)
+    result = classify_text_rules(text, path=path, account_to_scenario=account_to_scenario)
 
     if account_to_scenario and result.account_id:
         result.scenario_id = account_to_scenario.get(result.account_id)
@@ -247,10 +267,7 @@ def classify_text_llm(text: str, path: str = "") -> DocClassification:
 
     accounts = find_account_ids(text)
     companies = find_company_names(text)
-    account_id = None
-    if accounts:
-        borrower = [a for a in accounts if a.startswith("ACC-7")]
-        account_id = borrower[0] if borrower else accounts[0]
+    account_id = _pick_account(accounts, None)
 
     return DocClassification(
         path=path,

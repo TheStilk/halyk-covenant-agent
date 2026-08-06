@@ -1,43 +1,62 @@
-"""Extract Article 6 financial covenants (clauses 6.1, 6.2, 6.3) from loan agreements."""
+"""Extract the financial-covenant clauses named by the submission template.
+
+Which article holds them and which clause numbers exist are read off the
+template, not hardcoded: the private template may number them differently
+(audit finding C4).
+"""
 
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Optional
 
-from agent.config import COVENANT_IDS
 from agent.models import CovenantText
+from agent.tools.template import all_covenant_ids, article_numbers
 
-# Start of Article 6 body (not TOC entry)
-_ARTICLE6_START = re.compile(
-    r"(?:"
-    r"Статья\s+6\s*[—\-–:]\s*Финансовые\s+ковенанты"
-    r"|Article\s+6\s*[—\-–:]\s*(?:Financial\s+)?Covenants?"
-    r"|ARTICLE\s+6\s*[—\-–:]\s*(?:FINANCIAL\s+)?COVENANTS?"
-    r")",
-    re.IGNORECASE,
-)
 
-# End of Article 6 — next article or major section
-_ARTICLE6_END = re.compile(
-    r"(?:"
-    r"Статья\s+7\b"
-    r"|Article\s+7\b"
-    r"|ARTICLE\s+7\b"
-    r"|Статья\s+8\b"
-    r")",
-    re.IGNORECASE,
-)
+@lru_cache(maxsize=8)
+def _article_start_re(articles: tuple[str, ...]) -> re.Pattern[str]:
+    """Header of the covenant article body, e.g. "Статья 6 — Финансовые ковенанты".
 
-# Individual clause headers: "Пункт 6.1", "6.1.", "Clause 6.1"
-_CLAUSE_HEADER = re.compile(
-    r"(?:"
-    r"Пункт\s+(6\.[123])\b"
-    r"|Clause\s+(6\.[123])\b"
-    r"|(?<!\d)(6\.[123])\s*[—\-–.:)]\s+"
-    r")",
-    re.IGNORECASE,
-)
+    The title text after the number is optional: an agreement is free to call
+    the section anything, and on the private set it probably will.
+    """
+    alt = "|".join(re.escape(a) for a in articles)
+    return re.compile(
+        rf"(?:Статья|Article|ARTICLE|Раздел)\s+(?:{alt})\b"
+        rf"(?:\s*[—\-–:]\s*[^\n]{{0,80}})?",
+        re.IGNORECASE,
+    )
+
+
+@lru_cache(maxsize=8)
+def _article_end_re(articles: tuple[str, ...]) -> re.Pattern[str]:
+    """Header of any article numbered above the covenant article(s)."""
+    highest = max((int(a) for a in articles if a.isdigit()), default=6)
+    following = "|".join(str(n) for n in range(highest + 1, highest + 4))
+    return re.compile(
+        rf"(?:Статья|Article|ARTICLE|Раздел)\s+(?:{following})\b",
+        re.IGNORECASE,
+    )
+
+
+@lru_cache(maxsize=8)
+def _clause_header_re(clause_ids: tuple[str, ...]) -> re.Pattern[str]:
+    """Clause headers for exactly the ids the template asks about.
+
+    Matches "Пункт 6.1", "Clause 6.1", "6.1." and "6.1)" — but only for ids
+    present in the template, so body cross-references to other clauses do not
+    open a new section.
+    """
+    alt = "|".join(re.escape(cid) for cid in sorted(clause_ids, key=len, reverse=True))
+    return re.compile(
+        rf"(?:"
+        rf"(?:Пункт|Clause|п\.)\s*({alt})(?![\d.])"
+        rf"|(?<![\d.])({alt})(?![\d.])\s*[—\-–.:)]\s+"
+        rf")",
+        re.IGNORECASE,
+    )
 
 # Page furniture to strip from extracted text
 _PAGE_NOISE = re.compile(
@@ -47,21 +66,30 @@ _PAGE_NOISE = re.compile(
 )
 
 
-def extract_article6_block(text: str) -> Optional[str]:
-    """Return the Article 6 body text, or None if not found."""
-    # Prefer the *last* match of Article 6 header — TOC appears earlier
-    matches = list(_ARTICLE6_START.finditer(text))
-    if not matches:
-        # Fallback: start at first "Пункт 6.1" if present
-        m61 = re.search(r"Пункт\s+6\.1\b", text, re.I)
-        if not m61:
-            return None
-        start = m61.start()
-    else:
+def extract_article6_block(
+    text: str,
+    *,
+    clause_ids: tuple[str, ...] | None = None,
+) -> Optional[str]:
+    """Return the covenant-article body text, or None if not found."""
+    ids = clause_ids or all_covenant_ids()
+    articles = article_numbers()
+
+    # Prefer the *last* match of the article header — the TOC entry comes first
+    matches = list(_article_start_re(articles).finditer(text))
+    if matches:
         start = matches[-1].start()
+    else:
+        # Fallback: start at the first clause header the template asks about.
+        # This is the path that has to work when the private agreement titles
+        # its sections differently from "Статья 6 — Финансовые ковенанты".
+        first = _clause_header_re(ids).search(text)
+        if not first:
+            return None
+        start = first.start()
 
     rest = text[start:]
-    end_m = _ARTICLE6_END.search(rest)
+    end_m = _article_end_re(articles).search(rest)
     # Skip end match if it appears too early (within header line)
     if end_m and end_m.start() > 40:
         block = rest[: end_m.start()]
@@ -74,19 +102,23 @@ def extract_article6_block(text: str) -> Optional[str]:
     return block.strip()
 
 
-def split_covenant_clauses(article6_text: str) -> dict[str, str]:
-    """Split Article 6 body into 6.1 / 6.2 / 6.3 full-text clauses."""
+def split_covenant_clauses(
+    article6_text: str,
+    *,
+    clause_ids: tuple[str, ...] | None = None,
+) -> dict[str, str]:
+    """Split the covenant-article body into per-clause full texts."""
     result: dict[str, str] = {}
     if not article6_text:
         return result
 
+    ids = clause_ids or all_covenant_ids()
+
     # Find all clause header positions
     headers: list[tuple[int, str]] = []
-    for m in _CLAUSE_HEADER.finditer(article6_text):
+    for m in _clause_header_re(ids).finditer(article6_text):
         cid = next(g for g in m.groups() if g)
-        # normalize to "6.1" form
-        cid = cid if cid.startswith("6.") else f"6.{cid}"
-        if cid not in COVENANT_IDS:
+        if cid not in ids:
             continue
         # avoid double-hit for same id
         if any(h[1] == cid for h in headers):
@@ -114,13 +146,15 @@ def extract_covenants(
     text: str,
     *,
     source_path: Optional[str] = None,
+    clause_ids: tuple[str, ...] | None = None,
 ) -> dict[str, CovenantText]:
-    """Full pipeline: find Article 6 → split 6.1/6.2/6.3 → CovenantText map."""
-    block = extract_article6_block(text)
+    """Full pipeline: find the covenant article → split clauses → CovenantText map."""
+    ids = clause_ids or all_covenant_ids()
+    block = extract_article6_block(text, clause_ids=ids)
     if not block:
         return {}
 
-    clauses = split_covenant_clauses(block)
+    clauses = split_covenant_clauses(block, clause_ids=ids)
     out: dict[str, CovenantText] = {}
     for cid, clause_text in clauses.items():
         out[cid] = CovenantText(

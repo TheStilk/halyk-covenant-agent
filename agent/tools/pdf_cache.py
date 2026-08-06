@@ -24,13 +24,20 @@ def get_cache(directory: str | Path | None = None) -> Cache:
 
 
 def get_file_key(file_path: str | Path) -> str:
-    """Stable content-identity key: resolved path + size + mtime_ns."""
+    """Content-identity key: hash of the bytes.
+
+    Keyed on content rather than path+mtime so that copying the dataset to
+    another machine — which is exactly what happens on competition day — reuses
+    the cache instead of silently invalidating all of it (audit finding O4).
+    """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    stat = path.stat()
-    raw = f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    digest = hashlib.md5()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_pdf_with_cache(

@@ -11,6 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from agent.console import setup_console  # noqa: E402
+
+setup_console()
+
 
 def run_scenarios(scenario_ids: list[str], *, use_llm: bool = False) -> dict:
     from agent.graph import run_foundation

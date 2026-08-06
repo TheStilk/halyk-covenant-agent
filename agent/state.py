@@ -28,6 +28,7 @@ class AgentState(TypedDict, total=False):
     # Document inventory (global, built once)
     doc_index: list[dict]  # list of classification dicts
     docs_by_scenario: dict[str, dict[str, list[str]]]  # scenario → type → paths
+    extraction_preflight: dict  # what could not be read, and why (audit C2)
 
     # Results (reducer: append)
     results: Annotated[list[FinalCovenantResult], operator.add]
