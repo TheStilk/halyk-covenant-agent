@@ -10,7 +10,9 @@
 
 Результат — один файл `submission.json` строго по шаблону `submission_template.json`.
 
-**Open-set (фаза 3):** hackathon score ≈ **90.3%**, status accuracy **91.7%**, evidence **100%** (9/9 non-null).
+**Open set (финал):** hackathon score **100%** (36/36), status **100%**, evidence **100%** (9/9 non-null).
+
+**Репозиторий:** https://github.com/TheStilk/halyk-covenant-agent
 
 ---
 
@@ -20,7 +22,7 @@
 |----------|--------|
 | [README.md](README.md) (этот файл) | Быстрый старт, обзор, команды |
 | [docs/architecture.md](docs/architecture.md) | Пайплайн, модули, State, формулы |
-| [docs/usage.md](docs/usage.md) | CLI, env, прогоны, отладка |
+| [docs/usage.md](docs/usage.md) | CLI, env, прогоны, validate, отладка |
 | [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, маппинг, оценка хакатона |
 | [PLAN.md](PLAN.md) | Master Plan (единственный source of truth по ТЗ) |
 
@@ -28,7 +30,7 @@
 
 ## Быстрый старт
 
-Требования: **Python ≥ 3.12**, [uv](https://github.com/astral-sh/uv), `pdftotext` / `pdftoppm` / `tesseract` (желательно — для OCR KYC).
+Требования: **Python ≥ 3.12**, [uv](https://github.com/astral-sh/uv), `pdftotext` / `pdftoppm` / `tesseract` (рекомендуется — OCR KYC и таблиц EBITDA).
 
 ```bash
 # 1. Зависимости + .venv
@@ -40,11 +42,14 @@ cp .env.example .env
 # 3. Полный прогон → submission.json
 uv run python main.py phase3
 
-# 4. Сверка с ground_truth (open set)
+# 4. Валидация формата сдачи
+uv run python main.py validate
+
+# 5. Сверка с ground_truth (open set)
 uv run python scripts/eval_phase2.py
 ```
 
-Без API-ключей агент работает **детерминированным formula engine** (Qwen/Gemini подключаются при наличии ключей и низкой confidence).
+Без API-ключей агент работает **детерминированным formula engine** (Qwen/Gemini — при ключах и низкой confidence).
 
 ---
 
@@ -63,13 +68,14 @@ PDF (opaque hashes) + master_ledger_2025.csv
   Article 6 → тексты 6.1 / 6.2 / 6.3
         │
         ▼
-  metrics: Revenue, EBITDA, Capex, RP, Group Capex, reclass, cut-off…
+  metrics: Revenue, EBITDA, Capex, RP, Group Capex,
+           reclass, cut-off, FX, NaN fills, one-time add-backs…
         │
         ▼
   formula engine (+ optional Qwen) → status / actual / evidence
         │
         ▼
-  submission.json
+  submission.json  →  main.py validate
 ```
 
 Ключевые технические приёмы:
@@ -77,7 +83,10 @@ PDF (opaque hashes) + master_ledger_2025.csv
 - **Кэш PDF** (`diskcache`) — повторные прогоны быстрые  
 - **Final AUP only** — промежуточные «ПРОЕКТ»-ведомости игнорируются  
 - **Group Capex** — PPE rollforward из consolidated FS материнской группы  
-- **KYC OCR** — таблицы related parties / unrestricted subsidiaries  
+- **Adjusted EBITDA** — one-time items + порог существенности (OCR notes)  
+- **NaN ledger fills** — суммы «не в выгрузке» из notes/treasury  
+- **FX** — EUR→USD по курсу из notes  
+- **KYC OCR** — related parties / unrestricted subsidiaries  
 - **evidence** — транзакция, без которой вердикт меняется  
 
 ---
@@ -105,13 +114,14 @@ hakaton/
 ├── scripts/
 │   ├── smoke_phase1.py
 │   ├── run_one_scenario.py
-│   └── eval_phase2.py
+│   ├── eval_phase2.py
+│   └── validate_submission.py
 ├── agentic-bank-public/    # open dataset
 │   ├── master_ledger_2025.csv
 │   ├── documents/
 │   ├── submission_template.json
 │   └── ground_truth.json
-├── doc_cache/              # кэш извлечённого текста PDF
+├── doc_cache/              # кэш извлечённого текста PDF (gitignored)
 └── submission.json         # выход (gitignored)
 ```
 
@@ -121,8 +131,9 @@ hakaton/
 
 ```bash
 uv run python main.py foundation      # Phase 1: ledger + classify + Article 6
-uv run python main.py phase2          # полный расчёт
+uv run python main.py phase2          # полный расчёт → submission.json
 uv run python main.py phase3          # alias phase2
+uv run python main.py validate        # проверка submission vs template
 uv run python main.py map-accounts    # account ↔ scenario
 uv run python main.py classify PATH   # один PDF
 uv run python main.py extract-covenants PATH
@@ -130,7 +141,7 @@ uv run python main.py extract-covenants PATH
 uv run python scripts/smoke_phase1.py
 uv run python scripts/run_one_scenario.py P1 P5
 uv run python scripts/eval_phase2.py
-uv run python scripts/eval_phase2.py --scenarios P5 B1
+uv run python scripts/validate_submission.py
 ```
 
 Подробнее: [docs/usage.md](docs/usage.md).
@@ -156,18 +167,34 @@ uv run python scripts/eval_phase2.py --scenarios P5 B1
 - **diskcache** — кэш документов  
 - **pandas / pydantic** — ledger и structured I/O  
 - **uv** — env + lock  
+- **tesseract / pdftoppm** — OCR KYC и таблиц notes  
 
 ---
 
 ## Оценка (кратко)
 
-Каждая ячейка 0–1:
+36 ячеек (12 сценариев × 3 ковенанта). Каждая 0–1:
 
-- `status` — **0.50** (exact; неверный status → вся ячейка 0)  
-- `actual` — **0.30** × `max(0, 1 − e/0.05)`, `e = |pred−true|/|true|`  
-- `evidence_txn_id` — **0.20** (exact; если в GT `null` — баллы идут вместе с `actual`)
+| Компонент | Баллы | Условие |
+|-----------|-------|---------|
+| `status` | **0.50** | exact; неверный → вся ячейка 0 |
+| `actual` | **0.30** | `0.30 × max(0, 1 − e/0.05)`, `e = \|pred−true\|/\|true\|` |
+| `evidence_txn_id` | **0.20** | exact; если GT `null` — масштабируется с `actual` |
 
+Open set: **36.0 / 36.0 (100%)**.  
 Детали: [docs/data-and-scoring.md](docs/data-and-scoring.md).
+
+---
+
+## Боевой день (private set)
+
+```bash
+export DATA_DIR=/path/to/private-dataset
+rm -rf doc_cache          # чистый кэш на новых PDF
+uv run python main.py phase3
+uv run python main.py validate
+# сдать submission.json
+```
 
 ---
 

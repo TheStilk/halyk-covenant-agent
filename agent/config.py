@@ -24,8 +24,11 @@ DOC_CACHE_DIR = Path(os.getenv("DOC_CACHE_DIR", ROOT_DIR / "doc_cache"))
 # ---------------------------------------------------------------------------
 # Team meta (filled into submission.json)
 # ---------------------------------------------------------------------------
-TEAM_NAME = os.getenv("TEAM_NAME", "halyk-covenant-agent")
-CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "team@example.com")
+TEAM_NAME = os.getenv("TEAM_NAME", "Сычуанский Соус")
+CONTACT_EMAIL = os.getenv(
+    "CONTACT_EMAIL",
+    "serkebaevmadiyar09@gmail.com, zhenis415@gmail.com",
+)
 MODEL_LABEL = "qwen3.8-max + gemini-3.6-flash"
 
 # ---------------------------------------------------------------------------
