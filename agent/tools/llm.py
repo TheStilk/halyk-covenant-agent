@@ -54,7 +54,7 @@ def _make_chat(
         "api_key": api_key,
         "base_url": base_url,
         "temperature": temperature,
-        "max_tokens": 4096,
+        "max_tokens": max(1024, int(getattr(_cfg, "LLM_MAX_TOKENS", 8192))),
     }
     try:
         return ChatOpenAI(
