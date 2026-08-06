@@ -47,9 +47,9 @@
 **Задача:**
 1. Найти, как сейчас обрабатывается «неизвестный» тип ковенанта
 2. Спроектировать безопасный fallback:
-   - если formula engine не распознал тип → вызвать Qwen / Claude Opus structured output
-   - на вход: текст ковенанта + metrics + transactions
-   - на выход: `status`, `actual`, `evidence_txn_id`, `confidence`
+   - если formula engine не распознал тип → LLM Formula Reader (formula_spec) + code compute
+   - на вход: текст ковенанта + compact metrics
+   - на выход: formula_spec → actual/status (LLM не считает арифметику)
 3. Fallback должен включаться **только** когда детерминированный путь не сработал
 4. Не менять поведение на уже закрытых 36 ячейках open set
 

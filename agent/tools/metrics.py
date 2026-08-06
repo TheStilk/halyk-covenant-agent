@@ -1,6 +1,6 @@
 """Extract financial metrics for covenant analysis.
 
-Sources (Master Plan §7 step 4):
+Sources:
 - financial_notes + AUP reports (reclassifications, cut-offs, add-backs)
 - KYC (related parties + ownership threshold)
 - ledger (transaction classification + aggregates)

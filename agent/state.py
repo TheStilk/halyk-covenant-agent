@@ -1,4 +1,4 @@
-"""LangGraph AgentState (Master Plan §4)."""
+"""LangGraph AgentState."""
 
 from __future__ import annotations
 

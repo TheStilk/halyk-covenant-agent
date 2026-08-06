@@ -1,7 +1,6 @@
 """Ledger loading and account_id → scenario_id mapping.
 
-Per Master Plan §7 step 1 and CASE description:
-  txn_id always starts with scenario_id of the borrower whose account holds it.
+txn_id always starts with scenario_id of the borrower whose account holds it.
   Example: TXN-P1-0007 → scenario_id = P1, account_id = ACC-7801
   Example: TXN-P10-0062 → scenario_id = P10 (second hyphen segment)
 """
