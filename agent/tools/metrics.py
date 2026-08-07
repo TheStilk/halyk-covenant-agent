@@ -1207,11 +1207,20 @@ def extract_scenario_metrics(
                 amount = 0.0
         else:
             amount = float(amount_raw)
-        # Convert non-USD using auditor-disclosed rate
+        # Convert non-USD using auditor-disclosed rate.
+        # Without a rate: do NOT sum foreign amounts as USD (would break EBITDA).
         ccy = str(raw.get("currency") or "USD").upper()
-        if ccy != "USD" and ccy in fx_rates and amount != 0.0:
-            amount = amount * fx_rates[ccy]
-            ccy = "USD"
+        fx_unconverted = False
+        if ccy != "USD" and amount != 0.0:
+            if ccy in fx_rates:
+                amount = amount * fx_rates[ccy]
+                ccy = "USD"
+            else:
+                fx_unconverted = True
+                print(
+                    f"[metrics] {scenario_id} FX missing rate for {ccy} "
+                    f"txn={txn_id} amt={amount:.2f} → exclude from aggregates"
+                )
         cp = str(raw.get("counterparty") or "")
         cat = classify_txn_category(desc, amount)
 
@@ -1230,7 +1239,7 @@ def extract_scenario_metrics(
             if rec.txn_id is None:
                 rec.txn_id = txn_id  # bind for later evidence
 
-        excluded = txn_id in excluded_txns
+        excluded = txn_id in excluded_txns or fx_unconverted
         related = is_counterparty_related(cp, metrics.related_parties)
         # Fallback: management advisory to *Holding*/*Capital* when KYC missing party list
         if not related and not metrics.related_parties:
