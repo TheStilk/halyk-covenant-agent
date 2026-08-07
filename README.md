@@ -190,6 +190,16 @@ Open set: **36.0 / 36.0 (100%)**.
 
 ## Боевой день (private set)
 
+One-shot (OCR eng+rus+kaz → clear `doc_cache` → phase3 → validate):
+
+```bash
+NO_LLM=1 ./scripts/battle_run.sh /path/to/private-dataset
+# or with LLM already configured:
+./scripts/battle_run.sh /path/to/private-dataset
+```
+
+Вручную:
+
 ```bash
 export DATA_DIR=/path/to/private-dataset
 # optional: LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
