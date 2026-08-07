@@ -111,6 +111,11 @@ FORMULA_READER_PREFER_DET_ON_MISMATCH = os.getenv(
 FORMULA_READER_MAX_TEXT_CHARS = int(os.getenv("FORMULA_READER_MAX_TEXT_CHARS", "900"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8192"))
 PDF_TEXT_PREVIEW_CHARS = 3000
+# Soft OOM guard for .txt/.csv/.md/.json extract (latin-1 can load whole file)
+MAX_TEXT_FILE_MB = float(os.getenv("MAX_TEXT_FILE_MB", "16"))
+MAX_TEXT_FILE_BYTES = int(MAX_TEXT_FILE_MB * 1024 * 1024)
+# pdfplumber extract_tables: only first N pages (full-doc walk can OOM)
+MAX_TABLE_PAGES = int(os.getenv("MAX_TABLE_PAGES", "20"))
 
 # Tesseract languages required for battle OCR (KYC / notes tables; KZ + RU + EN)
 TESSERACT_LANGS = tuple(
