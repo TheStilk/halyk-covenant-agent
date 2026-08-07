@@ -67,10 +67,28 @@ def resolve_metric_value(name: str, m: ScenarioMetrics, *, needs_addbacks: bool)
     if needs_addbacks and key == "ebitda":
         key = "adjusted_ebitda"
     if key not in values:
-        # fuzzy: substring match
-        for k, v in values.items():
-            if key in k or k in key:
-                return float(v)
+        # fuzzy: substring match with warning (cutoff raised to reduce false matches)
+        candidates = [(k, v) for k, v in values.items() if key in k or k in key]
+        if len(candidates) == 1:
+            hit_key = candidates[0][0]
+            print(
+                f"[formula_compute] WARNING fuzzy metric match: '{name}' → '{hit_key}' "
+                f"(not exact)"
+            )
+            return float(candidates[0][1])
+        if len(candidates) > 1:
+            # Ambiguous match — prefer exact substring over partial
+            exact_sub = [(k, v) for k, v in candidates if key == k.replace('_', '')]
+            if len(exact_sub) == 1:
+                print(
+                    f"[formula_compute] WARNING fuzzy metric match: '{name}' → '{exact_sub[0][0]}' "
+                    f"(ambiguous, picked closest)"
+                )
+                return float(exact_sub[0][1])
+            print(
+                f"[formula_compute] WARNING ambiguous fuzzy match for '{name}': "
+                f"{[k for k, _ in candidates]} → returning 0.0"
+            )
         return 0.0
     return float(values[key])
 
