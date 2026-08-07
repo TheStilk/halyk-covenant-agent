@@ -69,12 +69,23 @@ def read_pdf_with_cache(
 
     if not force and key in cache:
         payload = cache[key]
+        doc: Optional[ExtractedDocument] = None
         if isinstance(payload, ExtractedDocument):
-            return payload
-        if isinstance(payload, dict):
-            return ExtractedDocument(**payload)
-        # Unexpected type — re-extract
-        print(f"[pdf_cache] unexpected cached type for {file_path.name}: {type(payload)}")
+            doc = payload
+        elif isinstance(payload, dict):
+            try:
+                doc = ExtractedDocument(**payload)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pdf_cache] bad cached dict for {file_path.name}: {exc}")
+                doc = None
+        else:
+            print(
+                f"[pdf_cache] unexpected cached type for {file_path.name}: {type(payload)}"
+            )
+        if doc is not None:
+            # Content-hash is portable; absolute path in payload is not (other machines).
+            doc.path = str(file_path)
+            return doc
 
     if extract_fn is None:
         from agent.tools.pdf_extract import extract_pdf
