@@ -770,13 +770,16 @@ _DRAFT_MARKERS = re.compile(
     r"НЕ\s+ЯВЛЯЕТСЯ\s+ОКОНЧАТЕЛЬНОЙ\s+ПОЗИЦИЕЙ|"
     r"РАБОЧИЙ\s+ДОКУМЕНТ\s*[—\-–]\s*ЗАМЕНЕНА|"
     r"РАБОЧИЙ\s+ДОКУМЕНТ\s+ПО\s+ИТОГАМ\s+ПРОМЕЖУТОЧНОГО|"
-    r"Предварительные\s+вопросы\s+по\s+классификации",
+    r"Предварительные\s+вопросы\s+по\s+классификации|"
+    r"ЖОБА\s*[—\-–]|аралық\s+позиция|жұмыс\s+құжаты",
     re.I,
 )
 _FINAL_AUP = re.compile(
     r"Отчёт\s+о\s+выполнении\s+согласованных\s+процедур|"
     r"окончательной\s+позицией\s+аудитора\s+для\s+целей|"
-    r"Настоящий\s+отчёт\s+заменяет\s+любые\s+промежуточные",
+    r"Настоящий\s+отчёт\s+заменяет\s+любые\s+промежуточные|"
+    r"келісілген\s+рәсімдер|"
+    r"аудитордың\s+түпкілікті\s+позиция",
     re.I,
 )
 
@@ -948,7 +951,12 @@ def parse_notes_and_aup(text: str, source_path: str = "") -> tuple[list[Reclassi
 
     # Draft intermediate AUP → ignore reclassifications (superseded by final AUP)
     # Exception: pure notes (Примечания) are never drafts even if they mention intermediate work
-    is_notes_doc = "Примечания к финансовой" in head or "ДОПОЛНЕНИЕ О СОБЛЮДЕНИИ" in text
+    is_notes_doc = (
+        "Примечания к финансовой" in head
+        or "ДОПОЛНЕНИЕ О СОБЛЮДЕНИИ" in text
+        or "Қаржылық есеп" in head
+        or "ескертпе" in head.lower()
+    )
     if is_draft and not is_notes_doc:
         return [], [], 0.0
 

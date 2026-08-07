@@ -37,11 +37,12 @@ def _clause_header_re(covenant_ids: Sequence[str]) -> re.Pattern[str]:
         ids = list(COVENANT_IDS)
     # Longer first so 6.10 wins over 6.1
     alts = "|".join(re.escape(c) for c in sorted(ids, key=len, reverse=True))
-    # Line-start only (MULTILINE ^)
+    # Line-start only (MULTILINE ^). RU Пункт / EN Clause / KZ Тармақ
     return re.compile(
         rf"(?:"
         rf"^[ \t]*Пункт\s+({alts})\b"
         rf"|^[ \t]*Clause\s+({alts})\b"
+        rf"|^[ \t]*Тармақ\s+({alts})\b"
         rf"|^[ \t]*({alts})\s*[—\-–.:)]\s+"
         rf")",
         re.IGNORECASE | re.MULTILINE,
@@ -55,8 +56,11 @@ def _article_start_re(major: str) -> re.Pattern[str]:
         rf"Статья\s+{m}\s*[—\-–:]\s*Финансовые\s+ковенанты"
         rf"|Article\s+{m}\s*[—\-–:]\s*(?:Financial\s+)?Covenants?"
         rf"|ARTICLE\s+{m}\s*[—\-–:]\s*(?:FINANCIAL\s+)?COVENANTS?"
+        rf"|Бап\s+{m}\s*[—\-–:]\s*Қаржылық\s+ковенант"
+        rf"|Бап\s+{m}\s*[—\-–:]\s*.{0,40}ковенант"
         rf"|Статья\s+{m}\b"
         rf"|Article\s+{m}\b"
+        rf"|Бап\s+{m}\b"
         rf")",
         re.IGNORECASE,
     )
@@ -75,6 +79,7 @@ def _article_end_re(major: str) -> re.Pattern[str]:
         rf"Статья\s+(?:{alts})\b"
         rf"|Article\s+(?:{alts})\b"
         rf"|ARTICLE\s+(?:{alts})\b"
+        rf"|Бап\s+(?:{alts})\b"
         rf")",
         re.IGNORECASE,
     )

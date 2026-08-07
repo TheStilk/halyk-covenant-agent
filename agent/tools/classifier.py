@@ -22,7 +22,8 @@ from agent.tools.pdf_extract import (
 # Strong signal patterns (order matters for scoring)
 # ---------------------------------------------------------------------------
 
-# OCR / RU often drops ё → е; allow both via [её]
+# OCR / RU often drops ё → е; allow both via [её].
+# KZ (қазақ): bank/legal titles for Halyk private set + subjective KZ readiness.
 _LOAN_STRONG = [
     re.compile(r"ДОГОВОР\s+БАНКОВСКОГО\s+ЗАЙМА", re.I),
     re.compile(r"LOAN\s+AGREEMENT", re.I),
@@ -31,6 +32,13 @@ _LOAN_STRONG = [
     re.compile(r"Article\s+6\s*[—\-–].{0,40}[Cc]ovenant", re.I),
     # bare "Пункт 6.1" is NOT strong — too many non-loan docs use clause numbers
     re.compile(r"старший\s+обеспеченный\s+за[её]м", re.I),
+    # Kazakh
+    re.compile(r"Банк\s+несие\s+шарты", re.I),
+    re.compile(r"Несие\s+шарты", re.I),
+    re.compile(r"Қарыз\s+шарты", re.I),
+    re.compile(r"Қарыз\s+келісім(?:\-?шарты|шарт)", re.I),
+    re.compile(r"Бап\s+6\s*[—\-–:]\s*Қаржылық\s+ковенант", re.I),
+    re.compile(r"Қаржылық\s+ковенанттар", re.I),
 ]
 
 _LOAN_WEAK = [
@@ -41,6 +49,12 @@ _LOAN_WEAK = [
     re.compile(r"Кредитор", re.I),
     re.compile(r"За[её]мщик", re.I),
     re.compile(r"Пункт\s+6\.\d+", re.I),  # weak only — needs other loan signals
+    # Kazakh
+    re.compile(r"несие\s+беруші", re.I),
+    re.compile(r"қарыз\s+алушы", re.I),
+    re.compile(r"қаржылық\s+ковенант", re.I),
+    re.compile(r"Тармақ\s+6\.\d+", re.I),
+    re.compile(r"несие\s+желісі", re.I),
 ]
 
 _NOTES_STRONG = [
@@ -57,6 +71,13 @@ _NOTES_STRONG = [
     re.compile(r"CONSOLIDATED\s+ANNUAL\s+REPORT", re.I),
     re.compile(r"Net book value at the beginning of the year", re.I),
     re.compile(r"Property,\s*plant\s+and\s+equipment", re.I),
+    # Kazakh
+    re.compile(r"Қаржылық\s+есептілікке\s+ескертпе", re.I),
+    re.compile(r"Қаржылық\s+есеп\s+беруге\s+ескертпе", re.I),
+    re.compile(r"Аудиторлық\s+қорытынды", re.I),
+    re.compile(r"Аудиторлық\s+іс", re.I),
+    re.compile(r"келісілген\s+рәсімдер", re.I),
+    re.compile(r"Түзетілген\s+EBITDA", re.I),
 ]
 
 _NOTES_WEAK = [
@@ -68,6 +89,12 @@ _NOTES_WEAK = [
     re.compile(r"связанн\w+\s+сторон", re.I),
     re.compile(r"related[-\s]?party", re.I),
     re.compile(r"Независимый\s+аудитор", re.I),
+    # Kazakh
+    re.compile(r"түсім", re.I),
+    re.compile(r"кіріс", re.I),
+    re.compile(r"капиталдық\s+шығын", re.I),
+    re.compile(r"байланысты\s+тарап", re.I),
+    re.compile(r"тәуелсіз\s+аудитор", re.I),
 ]
 
 _KYC_STRONG = [
@@ -80,6 +107,12 @@ _KYC_STRONG = [
     re.compile(r"beneficial\s+owner", re.I),
     re.compile(r"бенефициарн\w+\s+владель", re.I),
     re.compile(r"ФИНАНСОВЫЙ\s+МОНИТОРИНГ\s+И\s+КОМПЛАЕНС", re.I),
+    # Kazakh
+    re.compile(r"Клиентті\s+тиісінше\s+тексеру", re.I),
+    re.compile(r"Өз\s+клиентіңді\s+біл", re.I),
+    re.compile(r"Клиентті\s+біл", re.I),
+    re.compile(r"бенефициарлық\s+меншік\s+иесі", re.I),
+    re.compile(r"Қаржылық\s+мониторинг", re.I),
 ]
 
 # Weak KYC signals alone are NOT enough (internal "KYC procedure" manuals are junk)
@@ -87,6 +120,8 @@ _KYC_WEAK = [
     re.compile(r"\bKYC\b"),
     re.compile(r"связанных\s+сторон", re.I),
     re.compile(r"комплаенс", re.I),
+    re.compile(r"байланысты\s+тарап", re.I),
+    re.compile(r"комплаенс", re.I),  # same latin in KZ docs
 ]
 
 _JUNK_STRONG = [
@@ -108,18 +143,24 @@ _JUNK_STRONG = [
     re.compile(r"Периодическое\s+обновление\s+KYC", re.I),
     re.compile(r"Единое\s+руководство\s+по\s+внутренним", re.I),
     re.compile(r"Контролируемый\s+документ", re.I),
+    # Kazakh junk
+    re.compile(r"баспас[өо]з\s+хабарлама", re.I),
+    re.compile(r"ішкі\s+регламент", re.I),
+    re.compile(r"КҮШІНЕН\s+АЙЫРЫЛҒАН\s+РЕДАКЦИЯ", re.I),
 ]
 
 # Superseded / draft loan versions must not be treated as active agreements
 _SUPERSEDED = re.compile(
     r"НЕДЕЙСТВУЮЩАЯ\s+РЕДАКЦИЯ|Заменена\s+и\s+изложена\s+в\s+новой\s+редакции|"
-    r"НЕ\s+ПРИМЕНЯЕТСЯ|superseded|DRAFT\s*[—\-–]\s*NOT\s+EXECUTED",
+    r"НЕ\s+ПРИМЕНЯЕТСЯ|superseded|DRAFT\s*[—\-–]\s*NOT\s+EXECUTED|"
+    r"КҮШІНЕН\s+АЙЫРЫЛҒАН|қолданылмайды",
     re.I,
 )
 
 # Draft AUP / intermediate audit working papers (still useful but lower priority)
 _DRAFT_NOTES = re.compile(
-    r"ПРОЕКТ\s*[—\-–]\s*ПРОМЕЖУТОЧНАЯ|НЕ\s+ЯВЛЯЕТСЯ\s+ОКОНЧАТЕЛЬНОЙ\s+ПОЗИЦИЕЙ",
+    r"ПРОЕКТ\s*[—\-–]\s*ПРОМЕЖУТОЧНАЯ|НЕ\s+ЯВЛЯЕТСЯ\s+ОКОНЧАТЕЛЬНОЙ\s+ПОЗИЦИЕЙ|"
+    r"ЖОБА\s*[—\-–]|аралық\s+позиция",
     re.I,
 )
 
