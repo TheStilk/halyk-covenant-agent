@@ -10,6 +10,37 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _env_float(name: str, default: float) -> float:
+    """Parse float env; empty / invalid → default (never crash import on LLM_TIMEOUT_SEC=\"\")."""
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    s = str(raw).strip()
+    if not s:
+        return float(default)
+    try:
+        return float(s)
+    except ValueError:
+        print(f"[config] WARNING: invalid {name}={raw!r}, using {default}")
+        return float(default)
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse int env; empty / invalid → default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return int(default)
+    s = str(raw).strip()
+    if not s:
+        return int(default)
+    try:
+        return int(float(s))  # allow "2.0"
+    except ValueError:
+        print(f"[config] WARNING: invalid {name}={raw!r}, using {default}")
+        return int(default)
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -60,8 +91,8 @@ LLM_MODEL = (
     or os.getenv("QWEN_MODEL")
     or ""
 )
-LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "60"))
-LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
+LLM_TIMEOUT_SEC = _env_float("LLM_TIMEOUT_SEC", 60.0)
+LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 2)
 
 # Field `model` in submission.json — single source of truth
 MODEL_LABEL = (os.getenv("MODEL_LABEL") or LLM_MODEL or "deterministic-formula-engine").strip()
@@ -91,8 +122,8 @@ GEMINI_MODEL = CLASSIFY_MODEL
 # ---------------------------------------------------------------------------
 # Runtime knobs
 # ---------------------------------------------------------------------------
-CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.85"))
-MAX_BORROWER_CONCURRENCY = int(os.getenv("MAX_BORROWER_CONCURRENCY", "6"))
+CONFIDENCE_THRESHOLD = _env_float("CONFIDENCE_THRESHOLD", 0.85)
+MAX_BORROWER_CONCURRENCY = _env_int("MAX_BORROWER_CONCURRENCY", 6)
 CLASSIFY_USE_LLM = os.getenv("CLASSIFY_USE_LLM", "false").lower() in {"1", "true", "yes"}
 # LLM Formula Reader: interpret covenant text → formula_spec; code computes numbers.
 # Battle default: only run reader when det is unknown / low-confidence (not every cell).
@@ -109,18 +140,18 @@ FORMULA_READER_PREFER_DET_ON_MISMATCH = os.getenv(
     "FORMULA_READER_PREFER_DET_ON_MISMATCH", "true"
 ).lower() in {"1", "true", "yes"}
 # Cap covenant text sent to reader (reduces Gemma length-limit blowups)
-FORMULA_READER_MAX_TEXT_CHARS = int(os.getenv("FORMULA_READER_MAX_TEXT_CHARS", "900"))
+FORMULA_READER_MAX_TEXT_CHARS = _env_int("FORMULA_READER_MAX_TEXT_CHARS", 900)
 # FormulaSpec / short JSON — keep low to avoid long hallucination timeouts
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 1024)
 PDF_TEXT_PREVIEW_CHARS = 3000
 # Soft OOM guard for .txt/.csv/.md/.json extract (latin-1 can load whole file)
-MAX_TEXT_FILE_MB = float(os.getenv("MAX_TEXT_FILE_MB", "16"))
+MAX_TEXT_FILE_MB = _env_float("MAX_TEXT_FILE_MB", 16.0)
 MAX_TEXT_FILE_BYTES = int(MAX_TEXT_FILE_MB * 1024 * 1024)
 # pdfplumber extract_tables: only first N pages (full-doc walk can OOM)
-MAX_TABLE_PAGES = int(os.getenv("MAX_TABLE_PAGES", "32"))
+MAX_TABLE_PAGES = _env_int("MAX_TABLE_PAGES", 32)
 # Cap PDF text extract + OCR raster pages (huge prospectuses)
-MAX_PDF_TEXT_PAGES = int(os.getenv("MAX_PDF_TEXT_PAGES", "80"))
-MAX_OCR_PAGES = int(os.getenv("MAX_OCR_PAGES", "24"))
+MAX_PDF_TEXT_PAGES = _env_int("MAX_PDF_TEXT_PAGES", 80)
+MAX_OCR_PAGES = _env_int("MAX_OCR_PAGES", 24)
 
 # Tesseract languages required for battle OCR (KYC / notes tables; KZ + RU + EN)
 TESSERACT_LANGS = tuple(
