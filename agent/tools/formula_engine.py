@@ -748,21 +748,33 @@ def _compute_financing_to_ebitda(m: ScenarioMetrics, thr: float, direction: str)
     )
 
 
+def _is_q4_date(date_str: str | None) -> bool:
+    """True if date is calendar Q4 (Oct–Dec), any year. Expects YYYY-MM-DD."""
+    if not date_str or len(date_str) < 7:
+        return False
+    # Prefer ISO month segment; also accept leading YYYY-MM
+    try:
+        month = int(str(date_str)[5:7])
+    except ValueError:
+        return False
+    return month in (10, 11, 12)
+
+
 def _compute_q4_revenue(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     q4 = 0.0
     txns = []
     for t in m.transactions:
         if t.category != "revenue" or t.amount <= 0 or t.excluded:
             continue
-        if t.date and (t.date.startswith("2025-10") or t.date.startswith("2025-11") or t.date.startswith("2025-12")):
+        if _is_q4_date(t.date):
             q4 += t.abs_amount
             txns.append(t.txn_id)
-    # If no date-filtered revenue, fall back: any revenue in Q4 by date among all positive sales
+    # If no date-filtered revenue, fall back: any Q4 sales-like inflow
     if q4 == 0:
         for t in m.transactions:
             if t.amount <= 0 or t.excluded:
                 continue
-            if t.date and t.date[:7] in {"2025-10", "2025-11", "2025-12"}:
+            if _is_q4_date(t.date):
                 if t.category == "revenue" or "sales" in t.description.lower():
                     q4 += t.abs_amount
                     txns.append(t.txn_id)
