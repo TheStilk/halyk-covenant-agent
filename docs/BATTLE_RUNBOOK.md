@@ -1,131 +1,123 @@
-# Battle runbook (9 августа)
+# Battle runbook
 
-**Состояние после merge:** `main` @ `b3694db` = hybrid Formula Reader + det core **и** post-audit (holdout, preflight, content-hash cache, console UTF-8).  
-Open set при OCR: **36/36**. Не менять код без крайней необходимости.
+**Состояние:** `main` — hybrid det-first + battle-hardening (FX, safe ratios, KZ/RU/EN classify, cell isolation, `battle_run.sh`).  
+Open set + OCR eng+rus+kaz: **36/36**. Не менять known formula handlers без `eval_phase2`.
 
 ---
 
 ## 0. Не ломать
 
-- Не пушить «улучшения» без `eval_phase2` full + validate.
-- Не трогать known formula handlers «на глаз».
-- Не гонять все 36 ячеек через LLM на free tier.
-- Ключи API — только локальный `.env` (gitignored).
+- Не пушить «улучшения» без `eval_phase2` full + validate.  
+- Не трогать known formula handlers «на глаз».  
+- Не гонять все ячейки через LLM на free tier.  
+- Ключи API — только локальный `.env` (gitignored).  
+- Первый submit: **скорость** (det-only) → потом опционально LLM.
 
 ---
 
-## 1. OCR-check на боевой машине (сделать первым)
+## 1. Системные зависимости (Linux)
 
-Без OCR silently ломаются ячейки с таблицами-картинками (P4/P9-тип): actual неверный, confidence высокий.
+См. [README.md](../README.md) — пакеты для **Debian/Ubuntu**, **Fedora**, **Arch**.
+
+Минимум:
 
 ```bash
-# Linux
-which pdftoppm tesseract
-pdftoppm -v 2>&1 | head -1
-tesseract --version 2>&1 | head -2
-
-# Обязательны eng + rus + kaz (KYC / notes; private set may be KZ)
-tesseract --list-langs 2>/dev/null | grep -E '^(eng|rus|kaz)$' || true
+which pdftoppm tesseract pdftotext
+tesseract --list-langs | grep -E '^(eng|rus|kaz)$'
 ```
 
 | Ожидание | Если нет |
 |----------|----------|
-| `pdftoppm` и `tesseract` на PATH | `sudo apt install poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-kaz` |
-| langs **`eng`**, **`rus`**, **`kaz`** | `phase3` preflight **упадёт** до прогона |
+| `pdftoppm`, `tesseract`, `pdftotext` | install poppler + tesseract (см. README) |
+| langs **eng**, **rus**, **kaz** | `phase3` **preflight упадёт** |
 
-**Признаки в логе phase3 (норма при OCR):**
+**Норма в логе:**
 
 ```text
-[preflight] OCR toolchain: available
+=== PREFLIGHT OK ===
 [metrics] KYC OCR ....pdf: parties=...
 ```
 
-**Плохо:**
+**Плохо:** missing langs / `OCR toolchain: MISSING`.
 
-```text
-[preflight] OCR toolchain: MISSING ['pdftoppm', 'tesseract']
-[preflight] *** These pages will NOT be read...
-```
-
-→ ставить OCR **до** финального submission.
-
-Быстрая sanity (open set, если датасет под рукой):
+Sanity open set:
 
 ```bash
-cd /path/to/halyk-covenant-agent
 uv sync
 uv run python scripts/eval_phase2.py
-# ждать 36.000 / 36.0 при рабочем OCR
+# 36.000 / 36.0
 ```
+
+Типичное время full open-set с OCR: **~2–4 min** (CPU-зависимо).
 
 ---
 
-## 2. Private dataset — порядок
+## 2. Private dataset
 
-**Рекомендуется one-shot** (OCR check + clear cache + phase3 + validate):
+### One-shot (рекомендуется)
 
 ```bash
-# det-only (безопасный default на free tier):
+# det-only — быстрее, без API (хорош для «кто сдал первым»)
 NO_LLM=1 ./scripts/battle_run.sh /path/to/private-dataset
 
-# или с LLM (если ключи уже в .env / env):
+# с LLM (OpenAI-compatible, unknown/low-conf only):
+# export LLM_API_KEY=... LLM_BASE_URL=https://.../v1 LLM_MODEL=...
 ./scripts/battle_run.sh /path/to/private-dataset
-
-# опции: KEEP_CACHE=1  SKIP_UV_SYNC=1  DATA_DIR=...
 ```
 
-Вручную (то же самое по шагам):
+Опции env:
+
+| Env | Смысл |
+|-----|--------|
+| `KEEP_CACHE=1` | не чистить `doc_cache` |
+| `SKIP_UV_SYNC=1` | пропустить `uv sync` |
+| `NO_LLM=1` | unset `LLM_API_KEY` |
+| `DATA_DIR=...` | альтернатива аргументу пути |
+
+### Вручную
 
 ```bash
 export DATA_DIR=/path/to/private-dataset
-# optional LLM (unknown/low-conf only):
-# export LLM_API_KEY=...
-# export LLM_BASE_URL=https://.../v1
-# export LLM_MODEL=...
-# export MODEL_LABEL=...   # поле model в submission
-
-rm -rf doc_cache          # чистый кэш на новом DATA_DIR
+rm -rf doc_cache
 uv run python main.py phase3
 uv run python main.py validate
 ```
 
-### Чеклист после phase3
+### После phase3
 
-1. `=== BATTLE DIAGNOSTICS ===` → `cells filled` полный (template × scenarios).  
-2. `unknown formulas` / `low confidence` — ок, det/LLM policy сработает.  
-3. `bad extracts` / preflight blind pages — не игнорировать, если OCR missing.  
-4. `scenarios without loan` / `without notes` — риск.  
-5. `validate` → `OK — submission is valid`.  
-6. `submission.json`: `team`, `contact_email`, `model` (`MODEL_LABEL`) заполнены.  
-7. Нет null в `status` / `actual`.
+1. `cells filled` = template × scenarios  
+2. `validate` → `OK — submission is valid`  
+3. `team`, `contact_email`, `model` заполнены  
+4. нет null `status` / `actual`  
+5. `unknown formulas` / `scenarios without loan` — смотреть, не игнорировать  
+6. при OCR missing — **не** сдавать silent-wrong actual  
 
 ---
 
 ## 3. Eval splits (open set only)
 
 ```bash
-uv run python scripts/eval_phase2.py              # full 36
-uv run python scripts/eval_phase2.py --split holdout   # B4 P10 P2 P6
+uv run python scripts/eval_phase2.py
 uv run python scripts/eval_phase2.py --split train
+uv run python scripts/eval_phase2.py --split holdout
 ```
 
-На private set ids другие → используй `--split all` (или без split).  
-Holdout open set — **верхняя** оценка для det (handlers видели public formulas).
+Holdout open-set — **верхняя** граница для det (handlers видели public formulas).
 
 ---
 
-## 4. Hybrid policy (напоминание)
+## 4. Hybrid policy
 
 ```text
 1. Always det
-2. LLM down / ERR → det
-3. det strong known → det (no LLM call)
-4. det unknown/low-conf → FormulaSpec (LLM) + compute (code)
-5. mismatch: known det → det; unknown det → LLM compute
+2. LLM down / ERR / 429 → det
+3. det strong known → det (no LLM)
+4. unknown / low-conf → FormulaSpec + code compute
+5. mismatch: known det → det; unknown → LLM compute
+6. never null cells; per-cell try/except
 ```
 
-Knobs (defaults battle-safe):  
-`LLM_FORMULA_READER_ONLY_UNKNOWN=true`, `FORMULA_READER_PREFER_DET_ON_MISMATCH=true`.
+Knobs: `LLM_FORMULA_READER_ONLY_UNKNOWN=true`, `FORMULA_READER_PREFER_DET_ON_MISMATCH=true`, `LLM_MAX_TOKENS=1024`.
 
 ---
 
@@ -133,21 +125,22 @@ Knobs (defaults battle-safe):
 
 | Симптом | Действие |
 |---------|----------|
-| score < baseline / wrong AdjEBITDA | OCR check (п.1) |
-| Unicode crash на Windows | уже `setup_console()`; не откатывать console |
-| validate fail null | не сдавать; смотреть collect / ensure_filled |
-| LLM 429 / length | det backup; не паниковать |
-| empty scenarios / split | private: `--split all` |
-
-Не рефакторить mid-battle. Минимальный фикс → eval → validate → только потом push.
-
----
-
-## 6. Архив smoke (не production)
-
-`archive/gemini-llm-probe-20260806/` — исторические LLM-прогоны (без ключей).  
-Probe script: `archive/.../scripts/test_llm_formula_reader.py` — не в hot path.
+| preflight OCR fail | install langs, re-run |
+| empty cells | check diagnostics, logs |
+| FX missing rate logs | non-USD without rate skipped (by design) |
+| slow / 429 | `NO_LLM=1`, or raise backoff / lower RPM |
+| wrong DATA_DIR | `rm -rf doc_cache`, set path, re-run |
+| path overrides | `LEDGER_PATH` / `TEMPLATE_PATH` / `DOCUMENTS_DIR` |
 
 ---
 
-**Готово к бою, если:** OCR OK + `phase3` + `validate OK` + diagnostics cells filled.
+## 6. Что уже зашито (не «чинить» в день X)
+
+- Safe ratio edges (9999 sentinel)  
+- Signed revenue / expense nets  
+- FX skip without rate  
+- Covenant merge + orphan fill  
+- RU ё/е + KZ classify/headers/thr  
+- Cell crash isolation  
+- Cache path rewrite + side-cache isolation  
+- OOM guards (`MAX_TEXT_FILE_MB`, `MAX_TABLE_PAGES`)  
