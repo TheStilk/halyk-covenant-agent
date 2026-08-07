@@ -102,6 +102,21 @@ def sum_metrics(
     return sum(resolve_metric_value(n, m, needs_addbacks=needs_addbacks) for n in names)
 
 
+def _coerce_thr(thr: object) -> float | None:
+    """Parse threshold safely; LLM may return '', 'N/A', None, etc."""
+    if thr is None:
+        return None
+    if isinstance(thr, bool):
+        return None
+    try:
+        v = float(thr)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if v != v:  # NaN
+        return None
+    return v
+
+
 def compute_from_formula_spec(
     spec: FormulaSpec,
     metrics: ScenarioMetrics,
@@ -160,19 +175,22 @@ def compute_from_formula_spec(
         actual = _r2(raw)
     elif den_names:
         is_ratio = True
-        if thr is None:
+        thr_f = _coerce_thr(thr)
+        if thr_f is None:
             raw = (num / den) if den > 0 else 0.0
             actual = _r2(raw)
+            thr = None  # treat unparsable thr as missing for status branch
         else:
-            use_band = comparison == "max" and float(thr) < 100
+            use_band = comparison == "max" and thr_f < 100
             actual, status, raw, edge_note = _safe_ratio(
-                num, den, float(thr), comparison, max_ratio_band=use_band
+                num, den, thr_f, comparison, max_ratio_band=use_band
             )
     else:
         raw = num
         actual = _r2(raw)
 
-    if thr is None:
+    thr_f = _coerce_thr(thr)
+    if thr_f is None:
         status = "BREACH"
         conf = min(float(spec.confidence), 0.35)
         reasoning = (
@@ -186,15 +204,15 @@ def compute_from_formula_spec(
         reasoning = (
             f"[formula_spec:{spec.formula_kind}] {spec.raw_interpretation} | "
             f"num={spec.numerator_metrics}={num:.4f} den={spec.denominator_metrics}={den:.4f} "
-            f"→ actual={actual} {comparison} thr={thr} → {status}{edge_s}"
+            f"→ actual={actual} {comparison} thr={thr_f} → {status}{edge_s}"
         )
     else:
-        status = _status(actual, float(thr), comparison)
+        status = _status(actual, thr_f, comparison)
         conf = float(spec.confidence)
         reasoning = (
             f"[formula_spec:{spec.formula_kind}] {spec.raw_interpretation} | "
             f"num={spec.numerator_metrics}={num:.4f} den={spec.denominator_metrics}={den:.4f} "
-            f"→ actual={actual} {comparison} thr={thr} → {status}"
+            f"→ actual={actual} {comparison} thr={thr_f} → {status}"
         )
 
     return CovenantVerdict(
