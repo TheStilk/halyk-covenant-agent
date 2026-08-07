@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Any, Literal, Optional
 
@@ -104,8 +105,11 @@ def ensure_filled_cell(cell: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             actual = 0.0
         else:
             actual = abs(float(raw_actual))
-            if actual != actual:  # NaN
+            if not math.isfinite(actual):  # NaN / ±inf
                 actual = 0.0
+                if status == "COMPLIANT":
+                    # cannot prove compliance with non-finite actual
+                    status = "BREACH"
     except (TypeError, ValueError):
         actual = 0.0
     if actual < 0:

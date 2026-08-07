@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -140,8 +141,10 @@ def validate_submission(
                 # 5. actual number >= 0
                 if isinstance(actual, bool) or not isinstance(actual, (int, float)):
                     errors.append(f"{path}.actual must be a number (got {type(actual).__name__})")
-                elif isinstance(actual, float) and actual != actual:  # NaN
-                    errors.append(f"{path}.actual is NaN (must be a finite number >= 0)")
+                elif not math.isfinite(float(actual)):
+                    errors.append(
+                        f"{path}.actual is not finite (NaN/Inf); must be a finite number >= 0"
+                    )
                 elif actual < 0:
                     errors.append(f"{path}.actual must be >= 0 (got {actual})")
                 else:
