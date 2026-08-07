@@ -268,9 +268,16 @@ def analyze_one_covenant(
             print(f"[analyze] formula_reader ERR → det {scenario_id}/{covenant_id}: {err}")
             return det
         if spec is not None:
-            computed = compute_from_formula_spec(
-                spec, metrics, covenant_id=covenant_id
-            )
+            # Compute must not kill the graph node — fall back to det on any error
+            try:
+                computed = compute_from_formula_spec(
+                    spec, metrics, covenant_id=covenant_id
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[analyze] formula_compute ERR → det {scenario_id}/{covenant_id}: {exc}"
+                )
+                return det
             agree = specs_agree(computed, det)
             if agree:
                 chosen = det.model_copy(deep=True)

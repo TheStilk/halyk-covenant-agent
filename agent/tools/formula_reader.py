@@ -50,12 +50,22 @@ def metrics_snapshot_for_reader(m: ScenarioMetrics) -> str:
 
 
 def _clip_covenant_text(text: str, max_chars: int) -> str:
+    """Clip long covenant text for the LLM prompt.
+
+    Keep head (clause id / preamble) AND tail (often threshold/formula),
+    so a long legal preamble does not drop the numeric limit at the end.
+    """
     t = (text or "").strip() or "(empty)"
     if len(t) <= max_chars:
         return t
-    # Prefer head (clause header + formula) over tail
-    head = max_chars - 20
-    return t[:head] + "\n…[truncated]…"
+    marker = "\n…[truncated]…\n"
+    budget = max_chars - len(marker)
+    if budget < 40:
+        return t[: max(0, max_chars - 1)] + "…"
+    # Slightly more head than tail (headers matter); still keep end for thr
+    head_n = max(20, int(budget * 0.55))
+    tail_n = budget - head_n
+    return t[:head_n] + marker + t[-tail_n:]
 
 
 def read_formula_spec(

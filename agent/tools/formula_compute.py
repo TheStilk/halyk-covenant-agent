@@ -5,6 +5,8 @@ LLM never does arithmetic — only this module evaluates numbers.
 
 from __future__ import annotations
 
+import math
+
 from agent.models import CovenantVerdict
 from agent.models_formula import FormulaSpec
 from agent.tools.formula_engine import _r2, _safe_ratio, _status
@@ -103,7 +105,11 @@ def sum_metrics(
 
 
 def _coerce_thr(thr: object) -> float | None:
-    """Parse threshold safely; LLM may return '', 'N/A', None, etc."""
+    """Parse threshold safely; reject non-finite / unparsable values.
+
+    Pydantic usually delivers float|None, but 'inf'/'nan' strings can pass
+    as float('inf')/nan; bare float() also used for defense-in-depth.
+    """
     if thr is None:
         return None
     if isinstance(thr, bool):
@@ -112,7 +118,7 @@ def _coerce_thr(thr: object) -> float | None:
         v = float(thr)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    if v != v:  # NaN
+    if not math.isfinite(v):
         return None
     return v
 
