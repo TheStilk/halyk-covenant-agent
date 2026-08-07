@@ -110,6 +110,49 @@ def _status(actual: float, threshold: float, direction: str) -> str:
     return "COMPLIANT" if actual <= threshold + 1e-12 else "BREACH"
 
 
+def _safe_ratio(
+    num: float,
+    den: float,
+    thr: float,
+    direction: str,
+    *,
+    max_ratio_band: bool = False,
+) -> tuple[float, str, float, str]:
+    """Ratio with bank-safe zero-denominator policy.
+
+    Returns (actual, status, raw, edge_note).
+
+    den > 0 → normal num/den and threshold compare.
+    den <= 0:
+      min (coverage floors) → COMPLIANT, actual=0.0
+        (no interest / no base → infinite coverage; never false BREACH)
+      max (leverage ceilings) → BREACH, actual=0.0
+        (non-positive EBITDA etc. → cannot prove under cap; never false COMPLIANT)
+
+    actual is never ±inf (submission/validate must stay finite).
+    """
+    if den > 0:
+        raw = float(num) / float(den)
+        if max_ratio_band and direction == "max":
+            status, actual = _status_max_ratio(raw, thr)
+            return actual, status, raw, ""
+        actual = _r2(raw)
+        return actual, _status(raw, thr, direction), raw, ""
+    if direction == "min":
+        return (
+            0.0,
+            "COMPLIANT",
+            0.0,
+            "den<=0 → COMPLIANT for min (infinite/undefined coverage)",
+        )
+    return (
+        0.0,
+        "BREACH",
+        0.0,
+        "den<=0 → BREACH for max (infinite/undefined leverage)",
+    )
+
+
 def _status_max_ratio(raw: float, thr: float) -> tuple[str, float]:
     """Max-ratio covenants ('не превышать X'): report 2 d.p., test fairly.
 
@@ -243,8 +286,7 @@ def _find_evidence_for_sum(
 def _compute_capital_intensity(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     """capex / (opex + lease)."""
     den = m.opex + m.lease
-    actual = _r2(m.capex / den) if den > 0 else 0.0
-    status = _status(actual, thr, direction)
+    actual, status, raw, edge = _safe_ratio(m.capex, den, thr, direction)
 
     def recompute(exclude: set[str]) -> float:
         capex = sum(t.abs_amount for t in m.transactions if t.category == "capex" and not t.excluded and t.txn_id not in exclude and t.amount < 0)
@@ -256,6 +298,7 @@ def _compute_capital_intensity(m: ScenarioMetrics, thr: float, direction: str) -
     evidence = _find_evidence_for_sum(
         m, m.capex_txns + m.opex_txns, thr, direction, actual, recompute=recompute
     )
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
@@ -263,7 +306,7 @@ def _compute_capital_intensity(m: ScenarioMetrics, thr: float, direction: str) -
         reasoning=(
             f"Capital intensity = Capex / (OpEx + Lease) = "
             f"{m.capex:.2f} / ({m.opex:.2f} + {m.lease:.2f}) = {actual:.2f}; "
-            f"threshold {direction} {thr}"
+            f"threshold {direction} {thr}{edge_s}"
         ),
         confidence=0.92 if den > 0 and m.capex > 0 else 0.55,
         formula_id="capital_intensity",
@@ -320,8 +363,7 @@ def _compute_max_related_party(m: ScenarioMetrics, thr: float, direction: str) -
 
 def _compute_interest_coverage(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     """EBITDA / Interest (post reclass)."""
-    actual = _r2(m.ebitda / m.interest) if m.interest > 0 else 0.0
-    status = _status(actual, thr, direction)
+    actual, status, raw, edge = _safe_ratio(m.ebitda, m.interest, thr, direction)
 
     def recompute(exclude: set[str]) -> float:
         rev = sum(t.abs_amount for t in m.transactions if t.category == "revenue" and not t.excluded and t.txn_id not in exclude and t.amount > 0)
@@ -334,13 +376,14 @@ def _compute_interest_coverage(m: ScenarioMetrics, thr: float, direction: str) -
     evidence = _find_evidence_for_sum(
         m, m.interest_txns + m.opex_txns, thr, direction, actual, recompute=recompute
     )
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=evidence,
         reasoning=(
             f"Interest coverage = EBITDA/Interest = ({m.revenue:.2f}-{m.opex:.2f})/{m.interest:.2f} "
-            f"= {m.ebitda:.2f}/{m.interest:.2f} = {actual:.2f}; threshold {direction} {thr}"
+            f"= {m.ebitda:.2f}/{m.interest:.2f} = {actual:.2f}; threshold {direction} {thr}{edge_s}"
         ),
         confidence=0.9 if m.interest > 0 and m.revenue > 0 else 0.45,
         formula_id="interest_coverage",
@@ -374,12 +417,13 @@ def _compute_max_capex(m: ScenarioMetrics, thr: float, direction: str) -> Formul
 
 
 def _compute_rp_to_revenue(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
-    raw = (m.related_party_payments / m.revenue) if m.revenue > 0 else 0.0
-    if direction == "max":
-        status, actual = _status_max_ratio(raw, thr)
-    else:
-        actual = _r2(raw)
-        status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(
+        m.related_party_payments,
+        m.revenue,
+        thr,
+        direction,
+        max_ratio_band=(direction == "max"),
+    )
 
     def recompute(exclude: set[str]) -> float:
         rp = sum(
@@ -400,13 +444,14 @@ def _compute_rp_to_revenue(m: ScenarioMetrics, thr: float, direction: str) -> Fo
     # No evidence when COMPLIANT at rounded ceiling (aggregate ratio)
     if status == "COMPLIANT" and direction == "max":
         evidence = None
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=evidence,
         reasoning=(
             f"RP/Revenue = {m.related_party_payments:.2f}/{m.revenue:.2f} = {raw:.6f}→{actual:.2f}; "
-            f"threshold {direction} {thr}"
+            f"threshold {direction} {thr}{edge_s}"
         ),
         confidence=0.88 if m.revenue > 0 else 0.4,
         formula_id="rp_to_revenue",
@@ -414,9 +459,7 @@ def _compute_rp_to_revenue(m: ScenarioMetrics, thr: float, direction: str) -> Fo
 
 
 def _compute_rp_to_opex(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
-    raw = (m.related_party_payments / m.opex) if m.opex > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(m.related_party_payments, m.opex, thr, direction)
 
     def recompute(exclude: set[str]) -> float:
         rp = sum(t.abs_amount for t in m.transactions if t.is_related_party and t.amount < 0 and not t.excluded and t.txn_id not in exclude)
@@ -424,11 +467,12 @@ def _compute_rp_to_opex(m: ScenarioMetrics, thr: float, direction: str) -> Formu
         return (rp / opex) if opex > 0 else 0.0
 
     evidence = _find_evidence_for_sum(m, m.related_party_txns, thr, direction, raw, recompute=recompute)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=evidence,
-        reasoning=f"RP/OpEx = {m.related_party_payments:.2f}/{m.opex:.2f} = {raw:.4f}→{actual:.2f}; thr {direction} {thr}",
+        reasoning=f"RP/OpEx = {m.related_party_payments:.2f}/{m.opex:.2f} = {raw:.4f}→{actual:.2f}; thr {direction} {thr}{edge_s}",
         confidence=0.85 if m.opex > 0 else 0.4,
         formula_id="rp_to_opex",
     )
@@ -446,9 +490,8 @@ def _compute_ebitda_margin(m: ScenarioMetrics, thr: float, direction: str) -> Fo
     ).get("formula_hint", "")
     # Always prefer adjusted_ebitda when one-time table was parsed
     ebitda = m.adjusted_ebitda if (m.one_time_items or m.add_backs > 0) else m.ebitda
-    raw = (ebitda / m.revenue) if m.revenue > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(ebitda, m.revenue, thr, direction)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
@@ -456,7 +499,7 @@ def _compute_ebitda_margin(m: ScenarioMetrics, thr: float, direction: str) -> Fo
         reasoning=(
             f"AdjEBITDA/Revenue = {ebitda:.2f}/{m.revenue:.2f} = {raw:.4f}→{actual:.2f}; "
             f"opex={m.opex:.2f} add_backs={m.add_backs:.2f} "
-            f"non_qual_one_time={m.non_qualifying_one_time:.2f}; thr {direction} {thr}"
+            f"non_qual_one_time={m.non_qualifying_one_time:.2f}; thr {direction} {thr}{edge_s}"
         ),
         confidence=0.95 if m.revenue > 0 else 0.4,
         formula_id="adj_ebitda_margin" if (m.one_time_items or m.add_backs) else "ebitda_margin",
@@ -465,15 +508,14 @@ def _compute_ebitda_margin(m: ScenarioMetrics, thr: float, direction: str) -> Fo
 
 def _compute_tax_util_to_ebitda(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     num = m.tax + m.utilities
-    raw = (num / m.ebitda) if m.ebitda > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(num, m.ebitda, thr, direction)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
         reasoning=(
-            f"(Tax+Util)/EBITDA = ({m.tax:.2f}+{m.utilities:.2f})/{m.ebitda:.2f} = {raw:.4f}→{actual:.2f}"
+            f"(Tax+Util)/EBITDA = ({m.tax:.2f}+{m.utilities:.2f})/{m.ebitda:.2f} = {raw:.4f}→{actual:.2f}{edge_s}"
         ),
         confidence=0.9 if m.ebitda > 0 and num > 0 else 0.4,
         formula_id="tax_util_to_ebitda",
@@ -483,15 +525,14 @@ def _compute_tax_util_to_ebitda(m: ScenarioMetrics, thr: float, direction: str) 
 def _compute_insurance_to_lease(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     """Insurance / (Lease + Utilities) when covenant covers facility occupancy costs."""
     den = m.lease + m.utilities
-    raw = (m.insurance / den) if den > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(m.insurance, den, thr, direction)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
         reasoning=(
-            f"Insurance/(Lease+Util) = {m.insurance:.2f}/({m.lease:.2f}+{m.utilities:.2f}) = {raw:.4f}→{actual:.2f}"
+            f"Insurance/(Lease+Util) = {m.insurance:.2f}/({m.lease:.2f}+{m.utilities:.2f}) = {raw:.4f}→{actual:.2f}{edge_s}"
         ),
         confidence=0.9 if den > 0 else 0.4,
         formula_id="insurance_to_lease",
@@ -501,10 +542,9 @@ def _compute_insurance_to_lease(m: ScenarioMetrics, thr: float, direction: str) 
 def _compute_group_capex_to_ebitda(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     """Group Capex (consolidated PPE additions) / Borrower EBITDA."""
     group_capex = m.group_capex if m.group_capex > 0 else m.capex
-    raw_ratio = (group_capex / m.ebitda) if m.ebitda > 0 else 0.0
-    actual = _r2(raw_ratio)
-    status = _status(raw_ratio, thr, direction)
+    actual, status, raw_ratio, edge = _safe_ratio(group_capex, m.ebitda, thr, direction)
     conf = 0.95 if m.group_capex > 0 else 0.5
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
@@ -513,6 +553,7 @@ def _compute_group_capex_to_ebitda(m: ScenarioMetrics, thr: float, direction: st
             f"GroupCapex/EBITDA = {group_capex:.2f}/{m.ebitda:.2f} = {raw_ratio:.4f}→{actual:.2f}; "
             f"threshold {direction} {thr}. "
             f"source={'consolidated PPE rollforward' if m.group_capex > 0 else 'borrower capex proxy'}"
+            f"{edge_s}"
         ),
         confidence=conf,
         formula_id="group_capex_to_ebitda",
@@ -562,9 +603,7 @@ def _compute_sources_to_uses(m: ScenarioMetrics, thr: float, direction: str) -> 
                 fin_txns.append(t.txn_id)
     sources = m.revenue + financing
     uses = m.opex + m.capex
-    raw = (sources / uses) if uses > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(sources, uses, thr, direction)
 
     def recompute(exclude: set[str]) -> float:
         rev = sum(t.abs_amount for t in m.transactions if t.category == "revenue" and t.amount > 0 and not t.excluded and t.txn_id not in exclude)
@@ -590,13 +629,14 @@ def _compute_sources_to_uses(m: ScenarioMetrics, thr: float, direction: str) -> 
     evidence = _find_evidence_for_sum(
         m, candidates, thr, direction, raw, recompute=recompute
     )
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=evidence,
         reasoning=(
             f"Sources/Uses = (rev {m.revenue:.2f} + fin {financing:.2f}) / "
-            f"(opex {m.opex:.2f} + capex {m.capex:.2f}) = {raw:.4f}→{actual:.2f}; thr {direction} {thr}"
+            f"(opex {m.opex:.2f} + capex {m.capex:.2f}) = {raw:.4f}→{actual:.2f}; thr {direction} {thr}{edge_s}"
         ),
         confidence=0.85 if uses > 0 else 0.4,
         formula_id="sources_to_uses",
@@ -605,13 +645,16 @@ def _compute_sources_to_uses(m: ScenarioMetrics, thr: float, direction: str) -> 
 
 def _compute_revenue_to_payroll_util(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     den = m.payroll + m.utilities
-    actual = _r2(m.revenue / den) if den > 0 else 0.0
-    status = _status(actual, thr, direction)
+    actual, status, raw, edge = _safe_ratio(m.revenue, den, thr, direction)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
-        reasoning=f"Revenue/(Payroll+Util) = {m.revenue:.2f}/({m.payroll:.2f}+{m.utilities:.2f}) = {actual:.2f}",
+        reasoning=(
+            f"Revenue/(Payroll+Util) = {m.revenue:.2f}/({m.payroll:.2f}+{m.utilities:.2f}) "
+            f"= {actual:.2f}{edge_s}"
+        ),
         confidence=0.85 if den > 0 and m.revenue > 0 else 0.4,
         formula_id="revenue_to_payroll_util",
     )
@@ -633,9 +676,7 @@ def _compute_assets_transferred(m: ScenarioMetrics, thr: float, direction: str) 
             if t.category == "transfer" and t.amount < 0 and not t.excluded
         )
     total_capex = m.capex  # includes purchases + transfers
-    raw = (transferred / total_capex) if total_capex > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(transferred, total_capex, thr, direction)
 
     def recompute(exclude: set[str]) -> float:
         tr = sum(
@@ -654,13 +695,14 @@ def _compute_assets_transferred(m: ScenarioMetrics, thr: float, direction: str) 
         return (tr / cap) if cap > 0 else 0.0
 
     evidence = _find_evidence_for_sum(m, t_txns, thr, direction, raw, recompute=recompute)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=evidence,
         reasoning=(
             f"Unrestricted transfers {transferred:.2f} / total capex {total_capex:.2f} = {raw:.4f}→{actual:.2f}; "
-            f"txns={t_txns}; thr {direction} {thr}"
+            f"txns={t_txns}; thr {direction} {thr}{edge_s}"
         ),
         confidence=0.9 if transferred > 0 and total_capex > 0 else 0.4,
         formula_id="assets_transferred",
@@ -691,16 +733,15 @@ def _compute_revenue_minus_max_overhead(m: ScenarioMetrics, thr: float, directio
 def _compute_financing_to_ebitda(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
     """Springing leverage: financing inflows / EBITDA (FX-converted OpEx in EBITDA)."""
     fin = m.financing_inflows
-    raw = (fin / m.ebitda) if m.ebitda > 0 else 0.0
-    actual = _r2(raw)
-    status = _status(raw, thr, direction)
+    actual, status, raw, edge = _safe_ratio(fin, m.ebitda, thr, direction)
+    edge_s = f"; {edge}" if edge else ""
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
         reasoning=(
             f"Financing/EBITDA = {fin:.2f}/{m.ebitda:.2f} = {raw:.4f}→{actual:.2f}; "
-            f"fin_txns={m.financing_txns} opex={m.opex:.2f}; thr {direction} {thr}"
+            f"fin_txns={m.financing_txns} opex={m.opex:.2f}; thr {direction} {thr}{edge_s}"
         ),
         confidence=0.9 if fin > 0 and m.ebitda > 0 else 0.35,
         formula_id="financing_to_ebitda",
