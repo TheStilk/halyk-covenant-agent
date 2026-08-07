@@ -68,7 +68,10 @@ class FormulaSpec(BaseModel):
             return []
         if isinstance(v, str):
             return [v]
-        return list(v)  # type: ignore[arg-type]
+        if isinstance(v, (list, tuple, set)):
+            return [str(x) for x in v]
+        # LLM sometimes emits a bare number / dict — never list(float)
+        return []
 
     @field_validator("comparison", mode="before")
     @classmethod

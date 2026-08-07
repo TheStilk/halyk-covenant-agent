@@ -143,8 +143,9 @@ def compute_from_formula_spec(
     ]:
         pass
 
-    num = sum_metrics(spec.numerator_metrics, metrics, needs_addbacks=addbacks)
+    num_names = list(spec.numerator_metrics or [])
     den_names = list(spec.denominator_metrics or [])
+    num = sum_metrics(num_names, metrics, needs_addbacks=addbacks)
     den = sum_metrics(den_names, metrics, needs_addbacks=addbacks)
 
     kind = (spec.formula_kind or "").lower()
@@ -157,16 +158,14 @@ def compute_from_formula_spec(
     actual = 0.0
     status = "BREACH"
 
-    if kind in {"difference", "revenue_minus_max_overhead"} and len(
-        spec.numerator_metrics
-    ) >= 1:
-        if len(spec.numerator_metrics) >= 2:
+    if kind in {"difference", "revenue_minus_max_overhead"} and len(num_names) >= 1:
+        if len(num_names) >= 2:
             head = resolve_metric_value(
-                spec.numerator_metrics[0], metrics, needs_addbacks=addbacks
+                num_names[0], metrics, needs_addbacks=addbacks
             )
             rest = [
                 resolve_metric_value(n, metrics, needs_addbacks=addbacks)
-                for n in spec.numerator_metrics[1:]
+                for n in num_names[1:]
             ]
             raw = head - max(rest) if rest else head
         else:
@@ -175,7 +174,7 @@ def compute_from_formula_spec(
     elif kind in {"max_component", "max_single_overhead"}:
         parts = [
             resolve_metric_value(n, metrics, needs_addbacks=addbacks)
-            for n in (spec.numerator_metrics or ["payroll", "utilities"])
+            for n in (num_names or ["payroll", "utilities"])
         ]
         raw = max(parts) if parts else 0.0
         actual = _r2(raw)

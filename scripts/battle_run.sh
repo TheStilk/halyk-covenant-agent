@@ -86,7 +86,8 @@ if ! command -v tesseract >/dev/null 2>&1; then
   OCR_OK=0
 else
   echo "✓ tesseract: $(command -v tesseract)"
-  LANGS="$(tesseract --list-langs 2>&1 || true)"
+  # Strip CR for WSL/Windows tesseract output ("eng\r")
+  LANGS="$(tesseract --list-langs 2>&1 | tr -d '\r' || true)"
   for lang in eng rus kaz; do
     if echo "$LANGS" | grep -qx "$lang"; then
       echo "✓ tesseract lang: $lang"
