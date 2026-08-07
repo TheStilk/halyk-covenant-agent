@@ -12,11 +12,13 @@ from agent.tools.metrics import ScenarioMetrics
 # Keep system short — long prompts + thinking models hit completion length limits.
 _SYSTEM = """Bank covenant formula interpreter. Output FormulaSpec only.
 Rules:
+- Covenant text may be Russian, English, or Kazakh (қазақ тілі) — treat all equally.
 - No arithmetic, no invented numbers/txn ids.
-- Extract threshold (strip $ ,). comparison: min (≥/не менее) or max (≤/не превышать).
+- Extract threshold (strip $ ,). comparison: min (≥/не менее/кемінде/кем емес) or max (≤/не превышать/аспауы тиіс/аспауға).
 - Use ONLY metric tokens listed in the user message.
-- adjusted/скорректированн → adjusted_ebitda; group/Групп → group_capex.
-- related/аффилир/связанн payments → related_party_payments.
+- adjusted/скорректированн/түзетілген → adjusted_ebitda; group/Групп/топ → group_capex.
+- related/аффилир/связанн/байланысты/үлестес payments → related_party_payments.
+- revenue/выручк/түсім/кіріс → revenue; capex/капитальн/капиталдық → capex.
 - Ratio A/B → numerator=[A], denominator=[B]. Absolute cap → numerator=[metric], denominator=[].
 - Individual overhead / max single line / max(payroll, utilities): use max_payroll_utilities
   (NOT sum of payroll+utilities in numerator).

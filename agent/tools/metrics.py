@@ -510,6 +510,13 @@ _OWNERSHIP_ROW = re.compile(
     r"\.?\s*[.,]?\s*([0-9]+(?:\.[0-9]+)?)\s*%",
     re.I,
 )
+# Kazakh legal forms: «Астана Энергия» ЖШС 30.0% | Qazaq Energy АҚ 15%
+_OWNERSHIP_ROW_KZ = re.compile(
+    r"[\"'«]?([A-ZА-ЯЁӘҒҚҢӨҰҮҺІ][^%\n]{1,70}?)[\"'»]?\s+"
+    r"(ЖШС|ЖАҚ|АҚ|ТОО|АО)\s*"
+    r"([0-9]+(?:\.[0-9]+)?)\s*%",
+    re.I,
+)
 
 _SUBSIDIARY_PLEDGE_ROW = re.compile(
     r"([A-Z][A-Za-z0-9\-\s\.'&,]+?(?:LLP|JSC|LLC|Holdings|Assets|Processing|Conveyor|Services))"
@@ -536,13 +543,49 @@ _PPE_DISPOSALS = re.compile(
 _THRESHOLD_RE = re.compile(
     r"владеет\s+([0-9]+(?:\.[0-9]+)?)\s*%\s*и\s*более|"
     r"([0-9]+(?:\.[0-9]+)?)\s*%\s*и\s*более\s+голосующих|"
-    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*or\s*more",
+    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*or\s*more|"
+    # Kazakh ownership threshold
+    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*және\s+одан\s+да\s+к[өо]п|"
+    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*және\s+одан\s+жоғары|"
+    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*немесе\s+одан\s+к[өо]п|"
+    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*және\s+одан\s+да\s+к[өо]п\s+дауыс",
     re.I,
 )
 _COMPANY_HEADER = re.compile(
     r"Проверка\s+связанных\s+сторон\s*[·•]\s*([^\n]+)|"
-    r"Организация\s+([A-Z][^\n]+?JSC)",
+    r"Организация\s+([A-Z][^\n]+?JSC)|"
+    r"Байланысты\s+тараптарды\s+тексеру\s*[·•]\s*([^\n]+)|"
+    r"Ұйым\s+([^\n]{3,80})",
     re.I,
+)
+
+_KYC_OWN_START = re.compile(
+    r"Бенефициарное\s+владение|голосующих\s+прав|beneficial\s+ownership|"
+    r"Бенефициарлық\s+меншік|бенефициарлық\s+меншік|"
+    r"дауыс\s+беру\s+құқық",
+    re.I,
+)
+_KYC_OWN_END = re.compile(
+    r"Обеспечительное\s+покрытие|Идентификация\s+и\s+проверка|Проверка\s+по\s+санкцион|"
+    r"Дочерние\s+организации,\s+у\s+которых|Identification\s+and\s+verification|"
+    r"Кепілдік\s+жамылғы|Кепіл\s+қамтамасыз|"
+    r"Еншілес\s+ұйым|санкциялық\s+тексеру",
+    re.I,
+)
+
+_OWNERSHIP_NOISE = frozenset(
+    {
+        "организация",
+        "organization",
+        "доля голосующих прав",
+        "дочерняя организация",
+        "ұйым",
+        "еншілес ұйым",
+        "бенефициарлық меншік",
+        "бенефициарное владение",
+        "дауыс беру құқықтары",
+        "дауыс беру құқығы",
+    }
 )
 
 
@@ -550,13 +593,8 @@ def parse_kyc(text: str) -> tuple[list[RelatedParty], Optional[float], Optional[
     """Parse related parties and ownership threshold from KYC dossier."""
     # Limit ownership scan to the ownership section (avoid subsidiary pledge table)
     own_section = text
-    start = re.search(r"Бенефициарное\s+владение|голосующих\s+прав|beneficial\s+ownership", text, re.I)
-    end = re.search(
-        r"Обеспечительное\s+покрытие|Идентификация\s+и\s+проверка|Проверка\s+по\s+санкцион|"
-        r"Дочерние\s+организации,\s+у\s+которых|Identification\s+and\s+verification",
-        text,
-        re.I,
-    )
+    start = _KYC_OWN_START.search(text)
+    end = _KYC_OWN_END.search(text)
     if start:
         s = start.start()
         e = end.start() if end and end.start() > s else s + 1200
@@ -572,24 +610,28 @@ def parse_kyc(text: str) -> tuple[list[RelatedParty], Optional[float], Optional[
 
     parties: list[RelatedParty] = []
     seen: set[str] = set()
-    for m in _OWNERSHIP_ROW.finditer(own_section):
-        base = re.sub(r"\s+", " ", m.group(1)).strip(" .,\"'«»")
-        legal = re.sub(r"\s+", "", m.group(2).upper().replace(".", ""))
-        if legal.startswith("LLP") or legal == "LLP":
-            legal = "LLP"
-        name = f"{base} {legal}".strip()
-        # filter noise rows
-        if base.lower() in {"организация", "organization", "доля голосующих прав", "дочерняя организация"}:
-            continue
+
+    def _add_party(base: str, legal: str, pct: float) -> None:
+        base = re.sub(r"\s+", " ", base).strip(" .,\"'«»")
+        legal_n = re.sub(r"\s+", "", legal.upper().replace(".", ""))
+        if legal_n.startswith("LLP") or legal_n == "LLP":
+            legal_n = "LLP"
+        name = f"{base} {legal_n}".strip() if legal_n else base
+        if base.lower() in _OWNERSHIP_NOISE:
+            return
         if len(base) < 3 or len(name) > 90:
-            continue
-        pct = float(m.group(3))
+            return
         key = _normalize_cp_name(name)
         if key in seen:
-            continue
+            return
         seen.add(key)
         is_related = True if threshold is None else pct >= threshold
         parties.append(RelatedParty(name=name, ownership_pct=pct, is_related=is_related))
+
+    for m in _OWNERSHIP_ROW.finditer(own_section):
+        _add_party(m.group(1), m.group(2), float(m.group(3)))
+    for m in _OWNERSHIP_ROW_KZ.finditer(own_section):
+        _add_party(m.group(1), m.group(2), float(m.group(3)))
 
     company = None
     cm = _COMPANY_HEADER.search(text)
@@ -611,6 +653,9 @@ def parse_unrestricted_subsidiaries(text: str) -> list[SubsidiaryPledge]:
         "Дочерняя организация",
         "unrestricted",
         "неограниченн",
+        "Кепілдік жамылғы",
+        "еншілес ұйым",
+        "шектелмеген",
     ):
         idx = text.lower().find(marker.lower()) if marker else -1
         if idx >= 0:
@@ -618,14 +663,25 @@ def parse_unrestricted_subsidiaries(text: str) -> list[SubsidiaryPledge]:
             break
 
     thr = 50.0
-    mthr = re.search(r"ниже\s+([0-9]+(?:\.[0-9]+)?)\s*%", section, re.I)
+    mthr = re.search(
+        r"ниже\s+([0-9]+(?:\.[0-9]+)?)\s*%|"
+        r"([0-9]+(?:\.[0-9]+)?)\s*%\s*т[өо]мен",
+        section,
+        re.I,
+    )
     if mthr:
-        thr = float(mthr.group(1))
+        thr = float(next(g for g in mthr.groups() if g))
 
     seen: set[str] = set()
     for m in _SUBSIDIARY_PLEDGE_ROW.finditer(section):
         name = re.sub(r"\s+", " ", m.group(1)).strip(" .,")
-        if name.lower() in {"дочерняя организация", "организация", "доля активов в залоге"}:
+        if name.lower() in {
+            "дочерняя организация",
+            "организация",
+            "доля активов в залоге",
+            "еншілес ұйым",
+            "ұйым",
+        }:
             continue
         if len(name) < 5:
             continue
