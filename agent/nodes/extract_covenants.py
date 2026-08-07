@@ -25,6 +25,14 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
     covenants_by_scenario: dict[str, dict[str, str]] = {}
     path_to_text = _index_texts(doc_index)
 
+    def _merge_clauses(dst: dict[str, str], src: dict[str, str]) -> None:
+        """Union by covenant id; keep longer text when both present."""
+        for cid, text in src.items():
+            if not text:
+                continue
+            if cid not in dst or len(text) > len(dst[cid]):
+                dst[cid] = text
+
     for scenario_id, by_type in docs_by_scenario.items():
         expected_ids = covenant_ids_for_scenario(scenario_id)
         expected_n = len(expected_ids)
@@ -42,10 +50,11 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
                 text, source_path=path, covenant_ids=expected_ids
             )
             as_dict = covenants_to_dict(extracted)
-            if len(as_dict) > len(best):
-                best = as_dict
+            # Merge across multiple loan docs (do not replace-by-count)
+            _merge_clauses(best, as_dict)
             if len(best) >= expected_n:
-                break
+                # Still scan remaining loans for any missing ids / longer text
+                continue
         covenants_by_scenario[scenario_id] = best
         print(
             f"[covenants] {scenario_id} "
@@ -56,6 +65,7 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
     # Scenarios with no classified loan: scan all loan agreements
     scenario_ids = state.get("scenario_ids") or list(sc_to_acc.keys())
     missing = [s for s in scenario_ids if not covenants_by_scenario.get(s)]
+    orphan_global: dict[str, str] = {}
     if missing:
         print(f"[covenants] missing loan for {missing}; scanning all loan_agreements")
         all_loans = [
@@ -75,9 +85,33 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
             as_dict = covenants_to_dict(extracted)
             if not as_dict:
                 continue
-            if sc and not covenants_by_scenario.get(sc):
-                covenants_by_scenario[sc] = as_dict
-                print(f"[covenants] recovered {sc} from {path}")
+            if sc:
+                if not covenants_by_scenario.get(sc):
+                    covenants_by_scenario[sc] = as_dict
+                    print(f"[covenants] recovered {sc} from {path}")
+                else:
+                    _merge_clauses(covenants_by_scenario[sc], as_dict)
+            else:
+                # Unscoped loan: collect for global fill of still-empty scenarios
+                _merge_clauses(orphan_global, as_dict)
+                print(
+                    f"[covenants] orphan loan (no scenario_id) from {path}: "
+                    f"clauses={list(as_dict.keys())}"
+                )
+
+    # Apply orphan/global clauses only to scenarios still missing any clause
+    if orphan_global:
+        still_missing = [s for s in scenario_ids if not covenants_by_scenario.get(s)]
+        for sc in still_missing:
+            # Filter to template ids for that scenario
+            want = set(covenant_ids_for_scenario(sc))
+            filled = {cid: t for cid, t in orphan_global.items() if cid in want}
+            if filled:
+                covenants_by_scenario[sc] = filled
+                print(
+                    f"[covenants] applied orphan/global clauses to {sc}: "
+                    f"{list(filled.keys())}"
+                )
 
     documents = {
         "covenants_by_scenario": covenants_by_scenario,
