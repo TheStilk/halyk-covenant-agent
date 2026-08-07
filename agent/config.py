@@ -115,7 +115,7 @@ PDF_TEXT_PREVIEW_CHARS = 3000
 MAX_TEXT_FILE_MB = float(os.getenv("MAX_TEXT_FILE_MB", "16"))
 MAX_TEXT_FILE_BYTES = int(MAX_TEXT_FILE_MB * 1024 * 1024)
 # pdfplumber extract_tables: only first N pages (full-doc walk can OOM)
-MAX_TABLE_PAGES = int(os.getenv("MAX_TABLE_PAGES", "20"))
+MAX_TABLE_PAGES = int(os.getenv("MAX_TABLE_PAGES", "32"))
 
 # Tesseract languages required for battle OCR (KYC / notes tables; KZ + RU + EN)
 TESSERACT_LANGS = tuple(

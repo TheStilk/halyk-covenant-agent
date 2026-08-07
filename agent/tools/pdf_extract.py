@@ -302,7 +302,7 @@ def _oom_limits() -> tuple[int, int]:
 
         return int(MAX_TEXT_FILE_BYTES), int(MAX_TABLE_PAGES)
     except Exception:  # noqa: BLE001
-        return 16 * 1024 * 1024, 20
+        return 16 * 1024 * 1024, 32
 
 
 def extract_text_file(file_path: str) -> dict[str, Any]:
