@@ -20,14 +20,28 @@ cd "$ROOT"
 
 # --- resolve DATA_DIR ---
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '2,16p' "$0" | sed 's/^# \?//'
+  sed -n '2,15p' "$0" | sed 's/^# \?//'
   exit 0
 fi
 
+_resolve_dir() {
+  local p="$1"
+  if [[ -d "$p" ]]; then
+    (cd "$p" && pwd)
+  else
+    # allow absolute/relative display even if missing (error below)
+    if [[ "$p" = /* ]]; then
+      printf '%s\n' "$p"
+    else
+      printf '%s\n' "$ROOT/$p"
+    fi
+  fi
+}
+
 if [[ -n "${1:-}" ]]; then
-  export DATA_DIR="$(cd "$1" && pwd)"
+  export DATA_DIR="$(_resolve_dir "$1")"
 elif [[ -n "${DATA_DIR:-}" ]]; then
-  export DATA_DIR="$(cd "$DATA_DIR" && pwd)"
+  export DATA_DIR="$(_resolve_dir "$DATA_DIR")"
 else
   export DATA_DIR="$ROOT/agentic-bank-public"
 fi
