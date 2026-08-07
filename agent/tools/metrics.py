@@ -1278,8 +1278,9 @@ def extract_scenario_metrics(
         if t.excluded:
             continue
         if t.category == "revenue":
-            if t.amount > 0:
-                buckets["revenue"] += t.abs_amount
+            # Signed: sales (+), revenue returns/refunds (-) reduce revenue
+            if t.amount != 0:
+                buckets["revenue"] += t.amount
                 bucket_txns["revenue"].append(t.txn_id)
         elif t.category == "financing":
             if t.amount > 0:
@@ -1297,8 +1298,10 @@ def extract_scenario_metrics(
                 bucket_txns["capex"].append(t.txn_id)
                 # unrestricted matches recomputed cleanly below (avoid "" in name trap)
         else:
-            if t.amount < 0:
-                buckets[t.category] += t.abs_amount
+            # Expense-like buckets: outflows increase, credits/refunds decrease
+            # (ledger: expense amount < 0; credit/refund amount > 0)
+            if t.amount != 0:
+                buckets[t.category] -= t.amount  # -(-500)=+500 expense; -(+50)=-50 credit
                 bucket_txns[t.category].append(t.txn_id)
 
         if t.is_related_party and t.amount < 0 and not t.excluded:

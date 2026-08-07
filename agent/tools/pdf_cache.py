@@ -12,6 +12,7 @@ from agent.config import DOC_CACHE_DIR
 from agent.models import ExtractedDocument
 
 _doc_cache: Optional[Cache] = None
+_doc_cache_dir: Optional[str] = None  # resolved path of global cache root
 
 # Must change when extract quality logic / backend selection changes,
 # so old len(text)>=40 cache entries are not reused silently.
@@ -22,11 +23,25 @@ except Exception:  # noqa: BLE001
 
 
 def get_cache(directory: str | Path | None = None) -> Cache:
-    global _doc_cache
-    if _doc_cache is None or directory is not None:
-        path = Path(directory) if directory else DOC_CACHE_DIR
+    """Return a diskcache Cache.
+
+    - Default (directory=None): process-wide singleton under DOC_CACHE_DIR.
+    - Explicit directory: dedicated Cache for that path; does **not** replace
+      the global singleton (avoids cross-worker path clobber).
+    """
+    global _doc_cache, _doc_cache_dir
+
+    if directory is not None:
+        path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
-        _doc_cache = Cache(str(path))
+        # Side caches (e.g. clear_cache("/tmp/x")) must not rebind global
+        return Cache(str(path.resolve()))
+
+    default = str(Path(DOC_CACHE_DIR).resolve())
+    if _doc_cache is None or _doc_cache_dir != default:
+        Path(default).mkdir(parents=True, exist_ok=True)
+        _doc_cache = Cache(default)
+        _doc_cache_dir = default
     return _doc_cache
 
 
@@ -106,7 +121,16 @@ def read_pdf_with_cache(
 
 def clear_cache(directory: str | Path | None = None) -> int:
     """Clear the document cache. Returns number of items removed."""
+    global _doc_cache, _doc_cache_dir
     cache = get_cache(directory)
     n = len(cache)
     cache.clear()
+    # If we cleared the global root, drop singleton so next get_cache reopens cleanly
+    if directory is None and _doc_cache is not None:
+        try:
+            _doc_cache.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _doc_cache = None
+        _doc_cache_dir = None
     return n
