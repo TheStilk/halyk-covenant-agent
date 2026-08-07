@@ -18,28 +18,36 @@ from agent.tools.metrics import ClassifiedTxn, ScenarioMetrics
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+# Decimal: 2.0 or 1,5 (EU). Money still allows 1,500.00 (US thousands) via _to_float.
+_NUM_DEC = r"[0-9]+(?:[.,][0-9]+)?"
+_NUM_MONEY = r"[0-9][0-9,\s]*(?:\.[0-9]+)?"
+# Year / period after a bare number — not a financial threshold
+_NOT_YEAR = r"(?!\s*(?:год(?:а|у|ов)?|г\.?|лет|year|years?)\b)"
+
 _THRESHOLD_RE = re.compile(
     r"(?:"
-    r"не\s+превышал[оаи]?\s+([0-9]+(?:\.[0-9]+)?)\s*x?"
-    r"|не\s+превыша[ею]т\s+\$?\s*([0-9,]+(?:\.[0-9]+)?)"
-    r"|не\s+менее\s+([0-9]+(?:\.[0-9]+)?)\s*x?"
-    r"|не\s+менее\s+\$\s*([0-9,]+(?:\.[0-9]+)?)"
-    r"|ниже\s+величины\s+([0-9]+(?:\.[0-9]+)?)\s*x?"
-    r"|составлял[оаи]?\s+не\s+менее\s+([0-9]+(?:\.[0-9]+)?)\s*x?"
-    r"|составлял[оаи]?\s+не\s+менее\s+\$\s*([0-9,]+(?:\.[0-9]+)?)"
-    r"|превышал[оаи]?\s+([0-9]+(?:\.[0-9]+)?)\s*x"
-    r"|at\s+least\s+\$?\s*([0-9,]+(?:\.[0-9]+)?)"
-    r"|not\s+exceed\s+\$?\s*([0-9,]+(?:\.[0-9]+)?)"
-    r"|shall\s+not\s+exceed\s+([0-9]+(?:\.[0-9]+)?)\s*x?"
-    r"|minimum\s+of\s+([0-9]+(?:\.[0-9]+)?)\s*x?"
-    r"|≤\s*([0-9]+(?:\.[0-9]+)?)"
-    r"|≥\s*([0-9]+(?:\.[0-9]+)?)"
+    rf"не\s+превышал[оаи]?\s+({_NUM_DEC})\s*[xх]?"
+    rf"|не\s+превыша[ею]т\s+\$?\s*({_NUM_MONEY})"
+    rf"|не\s+менее\s+({_NUM_DEC})\s*[xх]?"
+    rf"|не\s+менее\s+\$\s*({_NUM_MONEY})"
+    rf"|ниже\s+величины\s+({_NUM_DEC})\s*[xх]?"
+    rf"|составлял[оаи]?\s+не\s+менее\s+({_NUM_DEC})\s*[xх]?"
+    rf"|составлял[оаи]?\s+не\s+менее\s+\$\s*({_NUM_MONEY})"
+    rf"|превышал[оаи]?\s+({_NUM_DEC})\s*[xх]"
+    rf"|at\s+least\s+\$?\s*({_NUM_MONEY})"
+    rf"|not\s+exceed\s+\$?\s*({_NUM_MONEY})"
+    rf"|shall\s+not\s+exceed\s+({_NUM_DEC})\s*[xх]?"
+    rf"|minimum\s+of\s+({_NUM_DEC})\s*[xх]?"
+    # ≤/≥: reject "≤ 2025 года" as a covenant thr
+    rf"|≤\s*({_NUM_DEC}){_NOT_YEAR}"
+    rf"|≥\s*({_NUM_DEC}){_NOT_YEAR}"
     r")",
     re.I,
 )
 
-_MONEY_RE = re.compile(r"\$\s*([0-9,]+(?:\.[0-9]+)?)")
-_RATIO_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*x\b", re.I)
+_MONEY_RE = re.compile(rf"\$\s*({_NUM_MONEY})")
+# Latin x OR Cyrillic х (common OCR / RU PDFs)
+_RATIO_RE = re.compile(rf"({_NUM_DEC})\s*[xх]\b", re.I)
 
 
 def parse_threshold(text: str) -> tuple[Optional[float], str]:
@@ -54,7 +62,8 @@ def parse_threshold(text: str) -> tuple[Optional[float], str]:
     )
     is_max = bool(
         re.search(
-            r"максимальн|не\s+превыш|не\s+допускать,?\s+чтобы|maximum|not\s+exceed|ceiling",
+            r"максимальн|не\s+превыш|не\s+более|не\s+допускать,?\s+чтобы|"
+            r"maximum|not\s+exceed|ceiling|no\s+more\s+than",
             low,
         )
     )
@@ -68,10 +77,10 @@ def parse_threshold(text: str) -> tuple[Optional[float], str]:
         if money:
             return _to_float(money[0]), "min"
         if ratios:
-            return float(ratios[0]), "min"
+            return _to_float(ratios[0]), "min"
     if is_max and not is_min:
         if ratios:
-            return float(ratios[0]), "max"
+            return _to_float(ratios[0]), "max"
         if money:
             return _to_float(money[0]), "max"
 
@@ -80,23 +89,46 @@ def parse_threshold(text: str) -> tuple[Optional[float], str]:
         if money:
             return _to_float(money[0]), "min"
         if ratios:
-            return float(ratios[0]), "min"
+            return _to_float(ratios[0]), "min"
     if re.search(r"максимальн", low):
         if ratios:
-            return float(ratios[0]), "max"
+            return _to_float(ratios[0]), "max"
         if money:
             return _to_float(money[0]), "max"
 
     # Fallback
     if ratios:
-        return float(ratios[0]), "max" if is_max or not is_min else "min"
+        return _to_float(ratios[0]), "max" if is_max or not is_min else "min"
     if money:
         return _to_float(money[0]), "min" if is_min else "max"
     return None, "max"
 
 
 def _to_float(s: str) -> float:
-    return float(s.replace(",", "").replace(" ", ""))
+    """Parse money/ratio token: US thousands (1,500.00) vs EU decimal (1,5).
+
+    Heuristic when only comma is present:
+      - exactly 3 digits after comma → thousands (1,500 → 1500)
+      - 1–2 digits after comma → decimal (1,5 → 1.5)
+    """
+    raw = (s or "").strip().replace("\u00a0", "").replace(" ", "")
+    if not raw:
+        return 0.0
+    if "," in raw and "." in raw:
+        # 1,500.00
+        raw = raw.replace(",", "")
+    elif "," in raw:
+        left, _, right = raw.partition(",")
+        if right.isdigit() and left.replace("-", "").isdigit():
+            if len(right) == 3:
+                raw = left + right  # thousands
+            elif 1 <= len(right) <= 2:
+                raw = left + "." + right  # decimal
+            else:
+                raw = raw.replace(",", "")
+        else:
+            raw = raw.replace(",", "")
+    return float(raw)
 
 
 def _r2(x: float) -> float:
