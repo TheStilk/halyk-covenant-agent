@@ -6,6 +6,7 @@
 | [architecture.md](architecture.md) | Пайплайн, hybrid policy, modules |
 | [usage.md](usage.md) | CLI, env, validate, private day |
 | [data-and-scoring.md](data-and-scoring.md) | Датасет, taxonomy, scoring |
+| [BATTLE_RUNBOOK.md](BATTLE_RUNBOOK.md) | OCR-check + private day order |
 
 Исторические LLM-smoke отчёты (без ключей): [../archive/gemini-llm-probe-20260806/](../archive/gemini-llm-probe-20260806/).
 
