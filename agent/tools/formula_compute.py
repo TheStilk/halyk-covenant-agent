@@ -5,11 +5,9 @@ LLM never does arithmetic — only this module evaluates numbers.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from agent.models import CovenantVerdict
 from agent.models_formula import FormulaSpec
-from agent.tools.formula_engine import _r2, _status, _status_max_ratio
+from agent.tools.formula_engine import _r2, _safe_ratio, _status
 from agent.tools.metrics import ScenarioMetrics
 
 # Metric names the reader is allowed to reference
@@ -78,7 +76,7 @@ def resolve_metric_value(name: str, m: ScenarioMetrics, *, needs_addbacks: bool)
             return float(candidates[0][1])
         if len(candidates) > 1:
             # Ambiguous match — prefer exact substring over partial
-            exact_sub = [(k, v) for k, v in candidates if key == k.replace('_', '')]
+            exact_sub = [(k, v) for k, v in candidates if key == k.replace("_", "")]
             if len(exact_sub) == 1:
                 print(
                     f"[formula_compute] WARNING fuzzy metric match: '{name}' → '{exact_sub[0][0]}' "
@@ -114,25 +112,33 @@ def compute_from_formula_spec(
 
     evidence_txn_id is left null for generic ratios; specialized det engine
     still provides evidence via cross-check path when preferred.
+
+    Ratio den<=0 policy (shared with formula_engine._safe_ratio):
+      min → COMPLIANT actual=0; max → BREACH actual=0.
     """
     addbacks = bool(spec.needs_addbacks)
     if spec.needs_group and "group_capex" not in [
         x.lower().replace(" ", "_") for x in (spec.numerator_metrics or [])
     ]:
-        # ensure group path available
         pass
 
     num = sum_metrics(spec.numerator_metrics, metrics, needs_addbacks=addbacks)
-    den_names = spec.denominator_metrics or []
+    den_names = list(spec.denominator_metrics or [])
     den = sum_metrics(den_names, metrics, needs_addbacks=addbacks)
 
     kind = (spec.formula_kind or "").lower()
+    thr = spec.threshold
+    comparison = spec.comparison if spec.comparison in ("min", "max") else "max"
 
-    # Special kinds that need non-sum semantics
+    is_ratio = False
+    edge_note = ""
+    raw = 0.0
+    actual = 0.0
+    status = "BREACH"
+
     if kind in {"difference", "revenue_minus_max_overhead"} and len(
         spec.numerator_metrics
     ) >= 1:
-        # num_metrics[0] - max(rest) or num - den
         if len(spec.numerator_metrics) >= 2:
             head = resolve_metric_value(
                 spec.numerator_metrics[0], metrics, needs_addbacks=addbacks
@@ -152,34 +158,38 @@ def compute_from_formula_spec(
         ]
         raw = max(parts) if parts else 0.0
         actual = _r2(raw)
-    elif den_names and den > 0:
-        raw = num / den
-        actual = _r2(raw)
-    elif den_names and den <= 0:
-        raw = 0.0
-        actual = 0.0
+    elif den_names:
+        is_ratio = True
+        if thr is None:
+            raw = (num / den) if den > 0 else 0.0
+            actual = _r2(raw)
+        else:
+            use_band = comparison == "max" and float(thr) < 100
+            actual, status, raw, edge_note = _safe_ratio(
+                num, den, float(thr), comparison, max_ratio_band=use_band
+            )
     else:
-        # absolute
         raw = num
         actual = _r2(raw)
 
-    thr = spec.threshold
-    comparison = spec.comparison if spec.comparison in ("min", "max") else "max"
-
     if thr is None:
-        # Cannot prove compliance without threshold
         status = "BREACH"
         conf = min(float(spec.confidence), 0.35)
         reasoning = (
             f"[formula_spec] {spec.raw_interpretation or kind}: "
             f"actual={actual} no threshold; covenant={covenant_id}"
         )
+    elif is_ratio:
+        # status already set by _safe_ratio when thr present
+        conf = float(spec.confidence)
+        edge_s = f" | {edge_note}" if edge_note else ""
+        reasoning = (
+            f"[formula_spec:{spec.formula_kind}] {spec.raw_interpretation} | "
+            f"num={spec.numerator_metrics}={num:.4f} den={spec.denominator_metrics}={den:.4f} "
+            f"→ actual={actual} {comparison} thr={thr} → {status}{edge_s}"
+        )
     else:
-        if comparison == "max" and den_names and thr < 100:
-            # ratio-style max with presentation band
-            status, actual = _status_max_ratio(raw, float(thr))
-        else:
-            status = _status(actual, float(thr), comparison)
+        status = _status(actual, float(thr), comparison)
         conf = float(spec.confidence)
         reasoning = (
             f"[formula_spec:{spec.formula_kind}] {spec.raw_interpretation} | "
