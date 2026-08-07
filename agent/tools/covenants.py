@@ -26,19 +26,25 @@ def _article_major(covenant_ids: Sequence[str]) -> str:
 
 
 def _clause_header_re(covenant_ids: Sequence[str]) -> re.Pattern[str]:
-    """Build header matcher for the given covenant ids (order-independent)."""
+    """Build header matcher for the given covenant ids (order-independent).
+
+    Headers must start a line (after optional whitespace) so mid-body
+    cross-refs like "Subject to Clause 6.2" or "see 6.2." do not split
+    the current clause.
+    """
     ids = [str(c).strip() for c in covenant_ids if str(c).strip()]
     if not ids:
         ids = list(COVENANT_IDS)
     # Longer first so 6.10 wins over 6.1
     alts = "|".join(re.escape(c) for c in sorted(ids, key=len, reverse=True))
+    # Line-start only (MULTILINE ^)
     return re.compile(
         rf"(?:"
-        rf"Пункт\s+({alts})\b"
-        rf"|Clause\s+({alts})\b"
-        rf"|(?<!\d)({alts})\s*[—\-–.:)]\s+"
+        rf"^[ \t]*Пункт\s+({alts})\b"
+        rf"|^[ \t]*Clause\s+({alts})\b"
+        rf"|^[ \t]*({alts})\s*[—\-–.:)]\s+"
         rf")",
-        re.IGNORECASE,
+        re.IGNORECASE | re.MULTILINE,
     )
 
 
