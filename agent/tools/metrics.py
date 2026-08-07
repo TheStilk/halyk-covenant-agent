@@ -1295,22 +1295,7 @@ def extract_scenario_metrics(
                 # also counts toward total capital expenditures base
                 buckets["capex"] += t.abs_amount
                 bucket_txns["capex"].append(t.txn_id)
-                # unrestricted subsidiary transfers only
-                cp_n = _normalize_cp_name(t.counterparty)
-                if any(u in cp_n or cp_n in u for u in unrestricted_names) or (
-                    not unrestricted_names and "processing" in cp_n  # soft fallback
-                ):
-                    # If we have unrestricted list, require match; else only first-pass Processing
-                    if unrestricted_names:
-                        if any(u in cp_n or cp_n in u for u in unrestricted_names):
-                            buckets["unrestricted_transfer"] += t.abs_amount
-                            bucket_txns["unrestricted_transfer"].append(t.txn_id)
-                    else:
-                        pass
-                if unrestricted_names and any(u in cp_n or cp_n in u for u in unrestricted_names):
-                    if t.txn_id not in bucket_txns["unrestricted_transfer"]:
-                        buckets["unrestricted_transfer"] += t.abs_amount
-                        bucket_txns["unrestricted_transfer"].append(t.txn_id)
+                # unrestricted matches recomputed cleanly below (avoid "" in name trap)
         else:
             if t.amount < 0:
                 buckets[t.category] += t.abs_amount
@@ -1320,14 +1305,17 @@ def extract_scenario_metrics(
             buckets["related_party_payments"] += t.abs_amount
             bucket_txns["related_party_payments"].append(t.txn_id)
 
-    # Fix unrestricted transfer double-count logic — clean recompute
+    # Unrestricted transfers: require non-empty counterparty.
+    # Note: "" in name is always True in Python — empty CP must not match.
     buckets["unrestricted_transfer"] = 0.0
     bucket_txns["unrestricted_transfer"] = []
     for t in classified:
         if t.excluded or t.category != "transfer" or t.amount >= 0:
             continue
         cp_n = _normalize_cp_name(t.counterparty)
-        if unrestricted_names and any(u in cp_n or cp_n in u for u in unrestricted_names):
+        if not cp_n or not unrestricted_names:
+            continue
+        if any(u in cp_n or cp_n in u for u in unrestricted_names if u):
             buckets["unrestricted_transfer"] += t.abs_amount
             bucket_txns["unrestricted_transfer"].append(t.txn_id)
 
