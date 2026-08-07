@@ -18,17 +18,18 @@ from agent.models import ExtractedDocument
 # Bump when quality thresholds change (paired with pdf_cache key version).
 EXTRACT_QUALITY_VERSION = "q2"
 
-_CYR_RE = re.compile(r"[А-Яа-яЁё]")
+# RU + KZ cyrillic (incl. әғқңөұүһі)
+_CYR_RE = re.compile(r"[А-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]")
 _LAT_RE = re.compile(r"[A-Za-z]")
-_ALNUM_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]")
+_ALNUM_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]")
 # "Meaningful" tokens: letters/digits/currency punctuation, not pure whitespace/noise
-_MEANINGFUL_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё$%.,;:()/\-]")
+_MEANINGFUL_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі$%.,;:()/\-]")
 
 _MARKER_CHECKS: list[tuple[str, re.Pattern[str]]] = [
     ("ACC", re.compile(r"\bACC[-\s]?\d{3,}", re.I)),
     ("TXN", re.compile(r"\bTXN[-\s]?", re.I)),
-    ("MONEY", re.compile(r"\$\s*\d|USD\b|доллар", re.I)),
-    ("ARTICLE", re.compile(r"Статья\s+\d|Article\s+\d", re.I)),
+    ("MONEY", re.compile(r"\$\s*\d|USD\b|доллар|теңге|\bKZT\b", re.I)),
+    ("ARTICLE", re.compile(r"Статья\s+\d|Article\s+\d|Бап\s+\d|Тармақ\s+\d", re.I)),
 ]
 
 

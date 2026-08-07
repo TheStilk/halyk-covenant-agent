@@ -22,7 +22,9 @@ from agent.tools.metrics import ClassifiedTxn, ScenarioMetrics
 _NUM_DEC = r"[0-9]+(?:[.,][0-9]+)?"
 _NUM_MONEY = r"[0-9][0-9,\s]*(?:\.[0-9]+)?"
 # Year / period after a bare number — not a financial threshold
-_NOT_YEAR = r"(?!\s*(?:год(?:а|у|ов)?|г\.?|лет|year|years?)\b)"
+_NOT_YEAR = (
+    r"(?!\s*(?:год(?:а|у|ов)?|г\.?|лет|year|years?|жыл(?:ы|ға)?)\b)"
+)
 
 _THRESHOLD_RE = re.compile(
     r"(?:"
@@ -38,6 +40,11 @@ _THRESHOLD_RE = re.compile(
     rf"|not\s+exceed\s+\$?\s*({_NUM_MONEY})"
     rf"|shall\s+not\s+exceed\s+({_NUM_DEC})\s*[xх]?"
     rf"|minimum\s+of\s+({_NUM_DEC})\s*[xх]?"
+    # Kazakh: кемінде / аспауы тиіс
+    rf"|кемінде\s+\$?\s*({_NUM_MONEY})"
+    rf"|кемінде\s+({_NUM_DEC})\s*[xх]?"
+    rf"|аспау(?:ы|ға)?\s+(?:тиіс\s+)?\$?\s*({_NUM_MONEY})"
+    rf"|аспау(?:ы|ға)?\s+(?:тиіс\s+)?({_NUM_DEC})\s*[xх]?"
     # ≤/≥: reject "≤ 2025 года" as a covenant thr
     rf"|≤\s*({_NUM_DEC}){_NOT_YEAR}"
     rf"|≥\s*({_NUM_DEC}){_NOT_YEAR}"
@@ -56,14 +63,16 @@ def parse_threshold(text: str) -> tuple[Optional[float], str]:
     # Prefer explicit ratio with x first for ratio covenants
     is_min = bool(
         re.search(
-            r"минимальн|не\s+менее|не\s+допускать\s+снижения|below|at\s+least|minimum",
+            r"минимальн|не\s+менее|не\s+допускать\s+снижения|below|at\s+least|minimum|"
+            r"кемінде|кем\s+емес|төмендемеу",
             low,
         )
     )
     is_max = bool(
         re.search(
             r"максимальн|не\s+превыш|не\s+более|не\s+допускать,?\s+чтобы|"
-            r"maximum|not\s+exceed|ceiling|no\s+more\s+than",
+            r"maximum|not\s+exceed|ceiling|no\s+more\s+than|"
+            r"аспау|аспауы\s+тиіс|аспауға|ең\s+к[өо]п",
             low,
         )
     )
@@ -85,12 +94,12 @@ def parse_threshold(text: str) -> tuple[Optional[float], str]:
             return _to_float(money[0]), "max"
 
     # Both signals: prefer based on "минимальн"/"максимальн" first word
-    if re.search(r"минимальн", low):
+    if re.search(r"минимальн|кемінде", low):
         if money:
             return _to_float(money[0]), "min"
         if ratios:
             return _to_float(ratios[0]), "min"
-    if re.search(r"максимальн", low):
+    if re.search(r"максимальн|аспау|ең\s+к[өо]п", low):
         if ratios:
             return _to_float(ratios[0]), "max"
         if money:
@@ -239,7 +248,9 @@ def detect_formula_id(covenant_text: str) -> str:
     t = covenant_text.lower()
     if "капиталоёмкост" in t or "capital intensity" in t:
         return "capital_intensity"  # capex / (opex + lease)
-    if "покрытия процентов" in t or "interest coverage" in t:
+    if "покрытия процентов" in t or "interest coverage" in t or re.search(
+        r"пайызды\s+жабу|пайыздық\s+жабын", t
+    ):
         return "interest_coverage"  # ebitda / interest
     if re.search(r"капитальных\s+затрат\s+группы\s+к\s+ebitda|group.*capex.*ebitda|capex.*group.*ebitda", t):
         return "group_capex_to_ebitda"
@@ -249,7 +260,9 @@ def detect_formula_id(covenant_text: str) -> str:
         return "ebitda_margin"
     if "related-party payments as a proportion" in t or (
         "связанн" in t and "от выручк" in t
-    ) or ("аффилирован" in t and "0." in t and "выручк" in t):
+    ) or ("аффилирован" in t and "0." in t and "выручк" in t) or (
+        "байланысты" in t and ("түсім" in t or "кіріс" in t)
+    ):
         return "rp_to_revenue"
     if "доля платежей связанным" in t and "операционн" in t:
         return "rp_to_opex"
@@ -279,14 +292,28 @@ def detect_formula_id(covenant_text: str) -> str:
         return "max_capex"
     if "individual overhead" in t or "отдельная статья накладных" in t:
         return "max_single_overhead"
-    if "связанн" in t or "аффилирован" in t or "related-party" in t or "related party" in t:
+    if (
+        "связанн" in t
+        or "аффилирован" in t
+        or "related-party" in t
+        or "related party" in t
+        or "байланысты тарап" in t
+        or "байланысты тұлға" in t
+    ):
         # absolute RP cap (not ratio)
-        if re.search(r"\$\s*[0-9]", t) and "выручк" not in t and "proportion" not in t:
+        if (
+            re.search(r"\$\s*[0-9]", t)
+            and "выручк" not in t
+            and "түсім" not in t
+            and "proportion" not in t
+        ):
             return "max_related_party"
         return "rp_to_revenue"
-    if "выручк" in t and ("не менее" in t or "минимальн" in t):
+    if ("выручк" in t or "түсім" in t or "кіріс" in t) and (
+        "не менее" in t or "минимальн" in t or "кемінде" in t
+    ):
         return "min_revenue"
-    if "капитальн" in t:
+    if "капитальн" in t or "капиталдық" in t:
         return "max_capex"
     return "unknown"
 
