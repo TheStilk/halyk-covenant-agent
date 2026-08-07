@@ -109,7 +109,8 @@ FORMULA_READER_PREFER_DET_ON_MISMATCH = os.getenv(
 ).lower() in {"1", "true", "yes"}
 # Cap covenant text sent to reader (reduces Gemma length-limit blowups)
 FORMULA_READER_MAX_TEXT_CHARS = int(os.getenv("FORMULA_READER_MAX_TEXT_CHARS", "900"))
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8192"))
+# FormulaSpec / short JSON — keep low to avoid long hallucination timeouts
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 PDF_TEXT_PREVIEW_CHARS = 3000
 # Soft OOM guard for .txt/.csv/.md/.json extract (latin-1 can load whole file)
 MAX_TEXT_FILE_MB = float(os.getenv("MAX_TEXT_FILE_MB", "16"))

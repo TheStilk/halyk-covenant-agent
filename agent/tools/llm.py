@@ -49,12 +49,13 @@ def _make_chat(
 ) -> Any:
     from langchain_openai import ChatOpenAI
 
+    # Floor 512 so env LLM_MAX_TOKENS=500 still works; default config is 1024
     kwargs: dict[str, Any] = {
         "model": model,
         "api_key": api_key,
         "base_url": base_url,
         "temperature": temperature,
-        "max_tokens": max(1024, int(getattr(_cfg, "LLM_MAX_TOKENS", 8192))),
+        "max_tokens": max(512, int(getattr(_cfg, "LLM_MAX_TOKENS", 1024))),
     }
     try:
         return ChatOpenAI(
@@ -136,6 +137,26 @@ def qwen_structured(
     return llm_structured(schema, temperature=temperature)
 
 
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    msg = f"{type(exc).__name__} {exc}".lower().replace("-", "").replace("_", "")
+    return (
+        "429" in msg
+        or "ratelimit" in msg
+        or "toomanyrequests" in msg
+        or "resourceexhausted" in msg
+        or "quotaexceeded" in msg
+    )
+
+
+def _retry_sleep(attempt: int, exc: BaseException) -> None:
+    """Backoff: longer on 429 (2s, 4s, 8s…), short otherwise (0.5s, 1s…)."""
+    if _is_rate_limit_error(exc):
+        delay = min(30.0, 2.0 * (2**attempt))
+    else:
+        delay = 0.5 * (attempt + 1)
+    time.sleep(delay)
+
+
 def structured_invoke(
     schema: Type[T],
     *,
@@ -144,7 +165,7 @@ def structured_invoke(
     temperature: float = 0.0,
     max_retries: Optional[int] = None,
 ) -> T:
-    """Invoke structured output with simple retry."""
+    """Invoke structured output with simple retry + rate-limit backoff."""
     if not is_llm_available():
         raise RuntimeError(llm_status_message())
 
@@ -165,7 +186,7 @@ def structured_invoke(
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             if attempt < retries:
-                time.sleep(0.5 * (attempt + 1))
+                _retry_sleep(attempt, exc)
                 continue
             break
     assert last_exc is not None
