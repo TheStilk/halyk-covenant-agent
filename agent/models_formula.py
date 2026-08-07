@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FormulaSpec(BaseModel):
     """LLM output: covenant interpretation only (no arithmetic)."""
 
     formula_kind: str = Field(
+        default="unknown",
         description=(
             "Short kind id, e.g. ratio, absolute_max, absolute_min, difference, "
             "max_component, interest_coverage, capital_intensity, unknown"
-        )
+        ),
     )
     comparison: Literal["min", "max"] = Field(
-        description="min = actual must be >= threshold; max = actual must be <= threshold"
+        default="max",
+        description="min = actual must be >= threshold; max = actual must be <= threshold",
     )
     threshold: Optional[float] = Field(
         default=None,
@@ -61,6 +63,19 @@ class FormulaSpec(BaseModel):
         description="One-sentence human reading of the covenant formula",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _defaults_for_missing_llm_keys(cls, data: Any) -> Any:
+        """Inject defaults when LLM omits required-looking keys (Pydantic runs this first)."""
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        if not out.get("formula_kind"):
+            out["formula_kind"] = "unknown"
+        if not out.get("comparison"):
+            out["comparison"] = "max"
+        return out
+
     @field_validator("numerator_metrics", "denominator_metrics", mode="before")
     @classmethod
     def _ensure_list(cls, v: object) -> list[str]:
@@ -80,3 +95,9 @@ class FormulaSpec(BaseModel):
         if s in {"min", "minimum", "at_least", ">=", "≥"}:
             return "min"
         return "max"
+
+    @field_validator("formula_kind", mode="before")
+    @classmethod
+    def _norm_kind(cls, v: object) -> str:
+        s = str(v or "unknown").strip()
+        return s or "unknown"
