@@ -62,6 +62,20 @@ uv run python scripts/eval_phase2.py
 
 ## 2. Private dataset — порядок
 
+**Рекомендуется one-shot** (OCR check + clear cache + phase3 + validate):
+
+```bash
+# det-only (безопасный default на free tier):
+NO_LLM=1 ./scripts/battle_run.sh /path/to/private-dataset
+
+# или с LLM (если ключи уже в .env / env):
+./scripts/battle_run.sh /path/to/private-dataset
+
+# опции: KEEP_CACHE=1  SKIP_UV_SYNC=1  DATA_DIR=...
+```
+
+Вручную (то же самое по шагам):
+
 ```bash
 export DATA_DIR=/path/to/private-dataset
 # optional LLM (unknown/low-conf only):
