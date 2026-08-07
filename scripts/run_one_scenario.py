@@ -36,7 +36,7 @@ def run_scenarios(scenario_ids: list[str], *, use_llm: bool = False) -> dict:
 
     gt = {}
     if GROUND_TRUTH_PATH.exists():
-        raw = json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8-sig"))
         gt = raw.get("scenarios", raw)
 
     rows = []

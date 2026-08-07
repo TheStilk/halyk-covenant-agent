@@ -74,10 +74,10 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
     from agent.tools.ledger import scenario_to_account, transactions_for_account
     from agent.tools.metrics import extract_metrics_for_state
 
-    gt_raw = json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8"))
+    gt_raw = json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8-sig"))
     gt = gt_raw.get("scenarios", gt_raw)
 
-    template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+    template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8-sig"))
     all_sc = list(template["answers"].keys())
     if scenario_ids:
         requested = list(scenario_ids)
