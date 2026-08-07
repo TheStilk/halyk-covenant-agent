@@ -12,7 +12,7 @@ uv sync
 |---------|--------|
 | `pdftotext` (poppler) | fallback извлечения текста |
 | `pdftoppm` (poppler) | рендер страниц KYC / notes для OCR |
-| `tesseract` (+ eng/rus) | OCR ownership, subsidiaries, EBITDA tables |
+| `tesseract` (**eng+rus+kaz** обязательны) | OCR KYC / notes tables (KZ docs too) |
 
 ```bash
 # Debian/Ubuntu (пример)

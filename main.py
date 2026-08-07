@@ -219,31 +219,50 @@ def build_parser() -> argparse.ArgumentParser:
 def preflight_check() -> list[str]:
     """Verify runtime deps before pipeline runs. Returns list of errors (empty = OK)."""
     import shutil
+    import subprocess as _sp
+
+    from agent.config import (
+        DATA_DIR,
+        DOCUMENTS_DIR,
+        LEDGER_PATH,
+        TEMPLATE_PATH,
+        TESSERACT_LANGS,
+    )
+
     errors: list[str] = []
 
-    # OCR toolchain
+    # OCR toolchain (eng+rus+kaz required for battle / KZ docs)
     if not shutil.which("pdftoppm"):
         errors.append("pdftoppm not found (install poppler-utils)")
     if not shutil.which("tesseract"):
         errors.append("tesseract not found (install tesseract-ocr)")
     else:
-        import subprocess as _sp
         try:
-            langs = _sp.run(
+            proc = _sp.run(
                 ["tesseract", "--list-langs"],
-                capture_output=True, text=True, timeout=10, check=False,
-            ).stderr + _sp.run(
-                ["tesseract", "--list-langs"],
-                capture_output=True, text=True, timeout=10, check=False,
-            ).stdout
-            for lang in ("eng", "rus"):
-                if lang not in langs:
-                    errors.append(f"tesseract language '{lang}' not installed")
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            # tesseract prints langs one per line (sometimes on stderr)
+            installed = {
+                line.strip()
+                for line in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines()
+                if line.strip() and " " not in line.strip() and line.strip().islower()
+            }
+            # Fallback: any token match if filtering was too strict
+            raw = (proc.stdout or "") + "\n" + (proc.stderr or "")
+            for lang in TESSERACT_LANGS:
+                if lang not in installed and lang not in raw.split():
+                    errors.append(
+                        f"tesseract language '{lang}' not installed "
+                        f"(need eng+rus+kaz; e.g. tesseract-ocr-kaz)"
+                    )
         except Exception as exc:
             errors.append(f"tesseract --list-langs failed: {exc}")
 
     # Data files
-    from agent.config import DATA_DIR, LEDGER_PATH, TEMPLATE_PATH, DOCUMENTS_DIR
     if not DATA_DIR.exists():
         errors.append(f"DATA_DIR not found: {DATA_DIR}")
     if not LEDGER_PATH.exists():
