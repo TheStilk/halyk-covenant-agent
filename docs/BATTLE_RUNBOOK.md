@@ -24,14 +24,14 @@ which pdftoppm tesseract
 pdftoppm -v 2>&1 | head -1
 tesseract --version 2>&1 | head -2
 
-# Нужны eng + rus (KYC / notes)
-tesseract --list-langs 2>/dev/null | grep -E 'eng|rus' || true
+# Обязательны eng + rus + kaz (KYC / notes; private set may be KZ)
+tesseract --list-langs 2>/dev/null | grep -E '^(eng|rus|kaz)$' || true
 ```
 
 | Ожидание | Если нет |
 |----------|----------|
-| `pdftoppm` и `tesseract` на PATH | `sudo apt install poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus` (или аналог) |
-| langs `eng`, `rus` | доустановить пакеты языков |
+| `pdftoppm` и `tesseract` на PATH | `sudo apt install poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-kaz` |
+| langs **`eng`**, **`rus`**, **`kaz`** | `phase3` preflight **упадёт** до прогона |
 
 **Признаки в логе phase3 (норма при OCR):**
 

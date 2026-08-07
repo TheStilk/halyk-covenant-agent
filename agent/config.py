@@ -112,6 +112,14 @@ FORMULA_READER_MAX_TEXT_CHARS = int(os.getenv("FORMULA_READER_MAX_TEXT_CHARS", "
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8192"))
 PDF_TEXT_PREVIEW_CHARS = 3000
 
+# Tesseract languages required for battle OCR (KYC / notes tables; KZ + RU + EN)
+TESSERACT_LANGS = tuple(
+    x.strip()
+    for x in os.getenv("TESSERACT_LANGS", "eng+rus+kaz").split("+")
+    if x.strip()
+)
+TESSERACT_LANG_ARG = "+".join(TESSERACT_LANGS)  # tesseract -l eng+rus+kaz
+
 # Covenant section keys — loaded from submission_template.json (not hardcoded).
 # Fallback only if template is missing/empty.
 _DEFAULT_COVENANT_IDS = ("6.1", "6.2", "6.3")

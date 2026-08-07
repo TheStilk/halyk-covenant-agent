@@ -673,11 +673,16 @@ def parse_group_capex_from_text(text: str) -> Optional[float]:
 
 
 def ocr_pdf_images(path: str) -> str:
-    """OCR embedded page images via pdftoppm + tesseract (for KYC ownership tables)."""
+    """OCR embedded page images via pdftoppm + tesseract (for KYC ownership tables).
+
+    Languages: eng+rus+kaz (battle default; override via TESSERACT_LANGS env).
+    """
     import shutil
     import subprocess
     import tempfile
     from pathlib import Path as _P
+
+    from agent.config import TESSERACT_LANG_ARG
 
     if not shutil.which("pdftoppm") or not shutil.which("tesseract"):
         return ""
@@ -700,7 +705,15 @@ def ocr_pdf_images(path: str) -> str:
         for img in sorted(_P(td).glob("page*.png")):
             try:
                 proc = subprocess.run(
-                    ["tesseract", str(img), "stdout", "-l", "eng+rus", "--psm", "6"],
+                    [
+                        "tesseract",
+                        str(img),
+                        "stdout",
+                        "-l",
+                        TESSERACT_LANG_ARG,
+                        "--psm",
+                        "6",
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=60,
