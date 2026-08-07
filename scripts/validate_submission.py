@@ -46,7 +46,7 @@ def validate_submission(
 
     # 1. Valid JSON
     try:
-        raw = submission_path.read_text(encoding="utf-8")
+        raw = submission_path.read_text(encoding="utf-8-sig")
         sub = json.loads(raw)
     except json.JSONDecodeError as exc:
         return [f"invalid JSON: {exc}"]
@@ -54,7 +54,7 @@ def validate_submission(
         return [f"cannot read submission: {exc}"]
 
     try:
-        template = json.loads(template_path.read_text(encoding="utf-8"))
+        template = json.loads(template_path.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError) as exc:
         return [f"cannot load template: {exc}"]
 

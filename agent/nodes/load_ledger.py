@@ -48,5 +48,5 @@ def _load_template_scenarios() -> list[str]:
     if not TEMPLATE_PATH.exists():
         # Open-set default
         return [f"P{i}" for i in range(1, 11)] + ["B1", "B4"]
-    data = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+    data = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8-sig"))
     return list(data.get("answers", {}).keys())

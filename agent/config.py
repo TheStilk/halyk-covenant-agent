@@ -140,7 +140,7 @@ def load_covenant_ids_from_template(
     per: dict[str, tuple[str, ...]] = {}
     if tpl_path.exists():
         try:
-            data = json.loads(tpl_path.read_text(encoding="utf-8"))
+            data = json.loads(tpl_path.read_text(encoding="utf-8-sig"))
             answers = data.get("answers") or {}
             if isinstance(answers, dict):
                 for sc, cells in answers.items():

@@ -117,12 +117,22 @@ def ensure_filled_cell(cell: Optional[dict[str, Any]] = None) -> dict[str, Any]:
 
     evidence = src.get("evidence_txn_id")
     if evidence is not None:
-        if not isinstance(evidence, str) or not evidence.strip():
+        # Coerce pandas/numpy ids (np.int64) and plain int → str; empty → null
+        try:
+            if isinstance(evidence, bytes):
+                evidence = evidence.decode("utf-8", errors="replace")
+            elif not isinstance(evidence, str):
+                # bool is int subclass — treat as invalid evidence
+                if isinstance(evidence, bool):
+                    evidence = None
+                else:
+                    evidence = str(evidence).strip()
+            else:
+                evidence = evidence.strip()
+        except Exception:  # noqa: BLE001
             evidence = None
-        elif evidence.strip().lower() in {"null", "none", "n/a"}:
+        if not evidence or evidence.lower() in {"null", "none", "n/a", "nan"}:
             evidence = None
-        else:
-            evidence = evidence.strip()
 
     return {
         "status": status,
