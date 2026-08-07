@@ -153,13 +153,9 @@ def ensure_filled_answers(
     for sc in scenarios:
         sc_map = answers.get(sc) if isinstance(answers.get(sc), dict) else {}
         out[sc] = {}
-        # Keep template covenant ids; also preserve any extra already present
-        ids = list(covenant_ids)
-        for cid in sc_map:
-            if cid not in ids:
-                ids.append(cid)
-        for cid in ids:
-            out[sc][cid] = ensure_filled_cell(sc_map.get(cid))
+        # Template ids only — extra keys (LLM hallucination) fail jury validate
+        for cid in covenant_ids:
+            out[sc][str(cid)] = ensure_filled_cell(sc_map.get(cid))
     return out
 
 

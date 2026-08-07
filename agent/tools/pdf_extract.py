@@ -296,21 +296,21 @@ def extract_pdf_document(file_path: str) -> ExtractedDocument:
 # (audit finding V3).
 SUPPORTED_SUFFIXES = (".pdf", ".txt", ".csv", ".md", ".json")
 
-def _oom_limits() -> tuple[int, int]:
-    """(max_text_file_bytes, max_table_pages) from config / env."""
+def _oom_limits() -> tuple[int, int, int]:
+    """(max_text_file_bytes, max_table_pages, max_pdf_text_pages) from config / env."""
     try:
-        from agent.config import MAX_TABLE_PAGES, MAX_TEXT_FILE_BYTES
+        from agent.config import MAX_PDF_TEXT_PAGES, MAX_TABLE_PAGES, MAX_TEXT_FILE_BYTES
 
-        return int(MAX_TEXT_FILE_BYTES), int(MAX_TABLE_PAGES)
+        return int(MAX_TEXT_FILE_BYTES), int(MAX_TABLE_PAGES), int(MAX_PDF_TEXT_PAGES)
     except Exception:  # noqa: BLE001
-        return 16 * 1024 * 1024, 32
+        return 16 * 1024 * 1024, 32, 80
 
 
 def extract_text_file(file_path: str) -> dict[str, Any]:
     """Read a plain-text-ish document, trying the encodings this corpus uses."""
     path = Path(file_path)
     errors: list[str] = []
-    max_text_bytes, _ = _oom_limits()
+    max_text_bytes, _, _ = _oom_limits()
     try:
         size = path.stat().st_size
     except OSError as exc:
@@ -390,13 +390,19 @@ def iter_documents(documents_dir: str | Path) -> list[Path]:
 def _extract_pdfplumber(path: Path) -> dict[str, Any]:
     import pdfplumber
 
-    _, max_table_pages = _oom_limits()
+    _, max_table_pages, max_text_pages = _oom_limits()
     pages_text: list[str] = []
     tables: list[Any] = []
     with pdfplumber.open(path) as pdf:
         page_count = len(pdf.pages)
-        for i, page in enumerate(pdf.pages):
-            t = page.extract_text() or ""
+        text_limit = min(page_count, max_text_pages)
+        for i in range(text_limit):
+            page = pdf.pages[i]
+            try:
+                t = page.extract_text() or ""
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pdf_extract] page text fail {path.name} p{i+1}: {exc}")
+                t = ""
             pages_text.append(t)
             # Tables only on first N pages — full-doc table walk OOMs on huge PDFs
             if i >= max_table_pages:
@@ -414,6 +420,8 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
         "tables": tables,
         "meta": {
             "table_pages_scanned": min(page_count, max_table_pages),
+            "text_pages_scanned": text_limit,
+            "text_pages_capped": page_count > max_text_pages,
         },
     }
 
@@ -421,12 +429,21 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
 def _extract_pymupdf(path: Path) -> dict[str, Any]:
     import fitz  # pymupdf
 
+    _, _, max_text_pages = _oom_limits()
     doc = fitz.open(path)
     pages_text: list[str] = []
+    page_count = 0
     try:
-        for page in doc:
-            pages_text.append(page.get_text("text") or "")
-        page_count = doc.page_count
+        if getattr(doc, "is_encrypted", False) and not doc.authenticate(""):
+            raise RuntimeError("document encrypted (password protected)")
+        page_count = int(doc.page_count)
+        text_limit = min(page_count, max_text_pages)
+        for i in range(text_limit):
+            try:
+                pages_text.append(doc.load_page(i).get_text("text") or "")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pdf_extract] pymupdf page fail {path.name} p{i+1}: {exc}")
+                pages_text.append("")
     finally:
         doc.close()
     return {
@@ -434,7 +451,10 @@ def _extract_pymupdf(path: Path) -> dict[str, Any]:
         "page_count": page_count,
         "method": "pymupdf",
         "tables": [],
-        "meta": {},
+        "meta": {
+            "text_pages_scanned": len(pages_text),
+            "text_pages_capped": page_count > max_text_pages,
+        },
     }
 
 

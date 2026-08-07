@@ -686,12 +686,36 @@ def ocr_pdf_images(path: str) -> str:
 
     if not shutil.which("pdftoppm") or not shutil.which("tesseract"):
         return ""
+    try:
+        from agent.config import MAX_OCR_PAGES
+
+        max_ocr = max(1, int(MAX_OCR_PAGES))
+    except Exception:  # noqa: BLE001
+        max_ocr = 24
+
+    def _page_num(p: _P) -> int:
+        # Natural order: page-2 before page-10 (not lexicographic)
+        m = re.search(r"(\d+)", p.stem)
+        return int(m.group(1)) if m else 0
+
     texts: list[str] = []
     with tempfile.TemporaryDirectory() as td:
         prefix = str(_P(td) / "page")
         try:
+            # Cap pages: -f 1 -l N avoids rasterizing 1000-page monsters
             subprocess.run(
-                ["pdftoppm", "-png", "-r", "200", path, prefix],
+                [
+                    "pdftoppm",
+                    "-png",
+                    "-r",
+                    "200",
+                    "-f",
+                    "1",
+                    "-l",
+                    str(max_ocr),
+                    path,
+                    prefix,
+                ],
                 check=False,
                 capture_output=True,
                 timeout=120,
@@ -702,7 +726,8 @@ def ocr_pdf_images(path: str) -> str:
         except Exception as exc:  # noqa: BLE001
             print(f"[ocr] pdftoppm failed on {path}: {exc}")
             return ""
-        for img in sorted(_P(td).glob("page*.png")):
+        images = sorted(_P(td).glob("page*.png"), key=_page_num)
+        for img in images[:max_ocr]:
             try:
                 proc = subprocess.run(
                     [
