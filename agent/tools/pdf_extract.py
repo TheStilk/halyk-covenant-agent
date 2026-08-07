@@ -295,15 +295,21 @@ def extract_pdf_document(file_path: str) -> ExtractedDocument:
 # (audit finding V3).
 SUPPORTED_SUFFIXES = (".pdf", ".txt", ".csv", ".md", ".json")
 
-# Soft OOM guards (battle: huge reports / mislabeled binaries)
-_MAX_TABLE_PAGES = 20
-_MAX_TEXT_FILE_BYTES = 8 * 1024 * 1024  # 8 MiB
+def _oom_limits() -> tuple[int, int]:
+    """(max_text_file_bytes, max_table_pages) from config / env."""
+    try:
+        from agent.config import MAX_TABLE_PAGES, MAX_TEXT_FILE_BYTES
+
+        return int(MAX_TEXT_FILE_BYTES), int(MAX_TABLE_PAGES)
+    except Exception:  # noqa: BLE001
+        return 16 * 1024 * 1024, 20
 
 
 def extract_text_file(file_path: str) -> dict[str, Any]:
     """Read a plain-text-ish document, trying the encodings this corpus uses."""
     path = Path(file_path)
     errors: list[str] = []
+    max_text_bytes, _ = _oom_limits()
     try:
         size = path.stat().st_size
     except OSError as exc:
@@ -315,8 +321,8 @@ def extract_text_file(file_path: str) -> dict[str, Any]:
             "tables": [],
             "meta": {"extract_errors": [str(exc)], "unreadable": True},
         }
-    if size > _MAX_TEXT_FILE_BYTES:
-        msg = f"text file too large ({size} bytes > {_MAX_TEXT_FILE_BYTES}); skip"
+    if size > max_text_bytes:
+        msg = f"text file too large ({size} bytes > {max_text_bytes}); skip"
         print(f"[extract] {path.name}: {msg}")
         return {
             "path": str(path),
@@ -383,6 +389,7 @@ def iter_documents(documents_dir: str | Path) -> list[Path]:
 def _extract_pdfplumber(path: Path) -> dict[str, Any]:
     import pdfplumber
 
+    _, max_table_pages = _oom_limits()
     pages_text: list[str] = []
     tables: list[Any] = []
     with pdfplumber.open(path) as pdf:
@@ -391,7 +398,7 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
             t = page.extract_text() or ""
             pages_text.append(t)
             # Tables only on first N pages — full-doc table walk OOMs on huge PDFs
-            if i >= _MAX_TABLE_PAGES:
+            if i >= max_table_pages:
                 continue
             try:
                 page_tables = page.extract_tables() or []
@@ -405,7 +412,7 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
         "method": "pdfplumber",
         "tables": tables,
         "meta": {
-            "table_pages_scanned": min(page_count, _MAX_TABLE_PAGES),
+            "table_pages_scanned": min(page_count, max_table_pages),
         },
     }
 
