@@ -356,8 +356,8 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
                 page_tables = page.extract_tables() or []
                 for tbl in page_tables:
                     tables.append(tbl)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pdf_extract] table extraction warning: {exc}")
     return {
         "text": "\n\n".join(pages_text),
         "page_count": page_count,

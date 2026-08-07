@@ -158,6 +158,7 @@ def format_battle_diagnostics(report: dict[str, Any]) -> str:
         f"scenarios without loan: {no_loan if no_loan else '—'}",
         f"scenarios without notes: {no_notes if no_notes else '—'}",
         f"time total: {elapsed_s}",
+        "REMINDER: ALWAYS rm -rf doc_cache/ on new machine or after extractor changes",
     ]
     return "\n".join(lines)
 

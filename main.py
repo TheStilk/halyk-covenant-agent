@@ -216,9 +216,59 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def preflight_check() -> list[str]:
+    """Verify runtime deps before pipeline runs. Returns list of errors (empty = OK)."""
+    import shutil
+    errors: list[str] = []
+
+    # OCR toolchain
+    if not shutil.which("pdftoppm"):
+        errors.append("pdftoppm not found (install poppler-utils)")
+    if not shutil.which("tesseract"):
+        errors.append("tesseract not found (install tesseract-ocr)")
+    else:
+        import subprocess as _sp
+        try:
+            langs = _sp.run(
+                ["tesseract", "--list-langs"],
+                capture_output=True, text=True, timeout=10, check=False,
+            ).stderr + _sp.run(
+                ["tesseract", "--list-langs"],
+                capture_output=True, text=True, timeout=10, check=False,
+            ).stdout
+            for lang in ("eng", "rus"):
+                if lang not in langs:
+                    errors.append(f"tesseract language '{lang}' not installed")
+        except Exception as exc:
+            errors.append(f"tesseract --list-langs failed: {exc}")
+
+    # Data files
+    from agent.config import DATA_DIR, LEDGER_PATH, TEMPLATE_PATH, DOCUMENTS_DIR
+    if not DATA_DIR.exists():
+        errors.append(f"DATA_DIR not found: {DATA_DIR}")
+    if not LEDGER_PATH.exists():
+        errors.append(f"Ledger not found: {LEDGER_PATH}")
+    if not TEMPLATE_PATH.exists():
+        errors.append(f"Template not found: {TEMPLATE_PATH}")
+    if not DOCUMENTS_DIR.exists():
+        errors.append(f"Documents dir not found: {DOCUMENTS_DIR}")
+
+    return errors
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    # Preflight for pipeline commands (not classify/validate/map)
+    if args.command in ("foundation", "phase2", "phase3"):
+        errors = preflight_check()
+        if errors:
+            print("=== PREFLIGHT FAILED ===")
+            for e in errors:
+                print(f"  ✗ {e}")
+            print("Fix the above before running the pipeline.")
+            return 1
+        print("=== PREFLIGHT OK ===")
     return args.func(args)
 
 

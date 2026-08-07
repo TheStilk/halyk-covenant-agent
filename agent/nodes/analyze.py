@@ -241,6 +241,10 @@ def analyze_one_covenant(
     if not llm_ok:
         return det
 
+    # Guard: empty covenant text cannot benefit from LLM — skip reader + legacy
+    if not (covenant_text or "").strip():
+        return det
+
     # 3) Strong known formula — skip LLM (open-set safe, saves RPM)
     need_reader = USE_LLM_FORMULA_READER and (covenant_text or "").strip()
     if LLM_FORMULA_READER_ONLY_UNKNOWN:

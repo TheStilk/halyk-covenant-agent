@@ -193,7 +193,7 @@ Open set: **36.0 / 36.0 (100%)**.
 ```bash
 export DATA_DIR=/path/to/private-dataset
 # optional: LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
-rm -rf doc_cache
+rm -rf doc_cache   # ALWAYS clear on new machine / after extractor changes
 uv run python main.py phase3
 # === BATTLE DIAGNOSTICS ===
 uv run python main.py validate

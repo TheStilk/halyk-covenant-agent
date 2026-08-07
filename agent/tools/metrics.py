@@ -691,7 +691,11 @@ def ocr_pdf_images(path: str) -> str:
                 capture_output=True,
                 timeout=120,
             )
-        except Exception:  # noqa: BLE001
+        except subprocess.TimeoutExpired:
+            print(f"[ocr] pdftoppm timeout (120s) on {path}")
+            return ""
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ocr] pdftoppm failed on {path}: {exc}")
             return ""
         for img in sorted(_P(td).glob("page*.png")):
             try:
@@ -704,7 +708,11 @@ def ocr_pdf_images(path: str) -> str:
                 )
                 if proc.stdout:
                     texts.append(proc.stdout)
-            except Exception:  # noqa: BLE001
+            except subprocess.TimeoutExpired:
+                print(f"[ocr] tesseract timeout (60s) on {img.name}")
+                continue
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ocr] tesseract failed on {img.name}: {exc}")
                 continue
     return "\n".join(texts)
 
