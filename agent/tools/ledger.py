@@ -9,11 +9,117 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
 from agent.config import LEDGER_PATH
+
+# Ghost ids from NaN→str, empty cells, Excel junk
+_BAD_ID_TOKENS = frozenset({"", "nan", "none", "null", "<na>", "nat", "n/a", "#n/a"})
+
+
+def _is_bad_id(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    s = str(value).strip().lower()
+    return s in _BAD_ID_TOKENS
+
+
+def coerce_amount(value: object) -> Optional[float]:
+    """Parse ledger amount: blank→None; US 1,234.56; EU 1.234,56; plain float."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        f = float(value)
+        return None if f != f else f  # NaN
+    s = str(value).strip()
+    if not s or s.lower() in _BAD_ID_TOKENS:
+        return None
+    # strip currency / grouping spaces (incl. NBSP)
+    for ch in ("\u00a0", "\u202f", " ", "$", "€", "£", "₸"):
+        s = s.replace(ch, "")
+    s = re.sub(r"(?i)\b(usd|kzt|eur|gbp)\b", "", s).strip()
+    if not s or s in {"-", "—", "–"}:
+        return None
+    # sign may be paren accounting: (1234.5)
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1].strip()
+    if s.startswith("+"):
+        s = s[1:]
+    if s.startswith("-"):
+        neg = True
+        s = s[1:]
+    if "," in s and "." in s:
+        # Last separator is decimal: EU 1.234,56 vs US 1,234.56
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        parts = s.split(",")
+        # single comma + 1–2 fractional digits → EU decimal; else thousands
+        if len(parts) == 2 and parts[1].isdigit() and 1 <= len(parts[1]) <= 2:
+            s = parts[0].replace(".", "") + "." + parts[1]
+        else:
+            s = s.replace(",", "")
+    try:
+        out = float(s)
+    except ValueError:
+        return None
+    if out != out:  # NaN
+        return None
+    return -out if neg else out
+
+
+def _parse_amount_series(series: pd.Series) -> pd.Series:
+    return series.map(coerce_amount).astype("Float64")
+
+
+def _parse_date_series(series: pd.Series) -> pd.Series:
+    """ISO first (public set), then explicit EU formats, then cautious fallbacks.
+
+    Never apply dayfirst to the whole column — pandas 3 can rewrite YYYY-MM-DD
+    under dayfirst=True (2025-06-05 → 2025-05-06).
+    """
+    raw = series.map(lambda x: "" if _is_bad_id(x) else str(x).strip())
+    out = pd.to_datetime(raw, format="%Y-%m-%d", errors="coerce")
+
+    def _fill_from(parsed: pd.Series) -> None:
+        nonlocal out
+        good = parsed.notna()
+        if not good.any():
+            return
+        out = out.copy()
+        out.loc[good.index[good]] = parsed.loc[good]
+
+    need = out.isna() & (raw != "")
+    if need.any():
+        try:
+            _fill_from(pd.to_datetime(raw[need], format="ISO8601", errors="coerce"))
+        except (TypeError, ValueError):
+            _fill_from(pd.to_datetime(raw[need], errors="coerce"))
+
+    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+        need = out.isna() & (raw != "")
+        if not need.any():
+            break
+        _fill_from(pd.to_datetime(raw[need], format=fmt, errors="coerce"))
+
+    need = out.isna() & (raw != "")
+    if need.any():
+        # last resort: dayfirst only on leftovers (not the full ISO column)
+        _fill_from(pd.to_datetime(raw[need], errors="coerce", dayfirst=True))
+    return out
 
 
 def scenario_from_txn_id(txn_id: str) -> str:
@@ -36,15 +142,25 @@ def build_account_to_scenario(ledger: pd.DataFrame) -> dict[str, str]:
 
     mapping: dict[str, str] = {}
     conflicts: list[tuple[str, str, str]] = []
+    skipped = 0
 
     for txn_id, account in zip(ledger["txn_id"], ledger["account_id"], strict=False):
-        account = str(account)
-        scenario = scenario_from_txn_id(str(txn_id))
-        if account in mapping and mapping[account] != scenario:
-            conflicts.append((account, mapping[account], scenario))
+        if _is_bad_id(txn_id) or _is_bad_id(account):
+            skipped += 1
             continue
-        mapping[account] = scenario
+        account_s = str(account).strip()
+        try:
+            scenario = scenario_from_txn_id(str(txn_id).strip())
+        except ValueError:
+            skipped += 1
+            continue
+        if account_s in mapping and mapping[account_s] != scenario:
+            conflicts.append((account_s, mapping[account_s], scenario))
+            continue
+        mapping[account_s] = scenario
 
+    if skipped:
+        print(f"[ledger] WARNING: skipped {skipped} rows with bad txn_id/account_id")
     if conflicts:
         sample = conflicts[:5]
         print(
@@ -66,10 +182,23 @@ def load_ledger(path: str | Path | None = None) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Ledger missing columns: {sorted(missing)}")
 
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["txn_id"] = df["txn_id"].astype(str)
-    df["account_id"] = df["account_id"].astype(str)
+    n0 = len(df)
+    # Drop empty / NaN txn_id before str coercion turns them into "nan" ghosts
+    bad_txn = df["txn_id"].map(_is_bad_id)
+    if bad_txn.any():
+        n_bad = int(bad_txn.sum())
+        print(f"[ledger] WARNING: dropping {n_bad} rows with empty/NaN txn_id")
+        df = df.loc[~bad_txn].copy()
+
+    df["amount"] = _parse_amount_series(df["amount"])
+    df["date"] = _parse_date_series(df["date"])
+    # String ids; avoid pandas NaN → literal "nan"
+    df["txn_id"] = df["txn_id"].map(lambda x: str(x).strip())
+    df["account_id"] = df["account_id"].map(
+        lambda x: "" if _is_bad_id(x) else str(x).strip()
+    )
+    if len(df) != n0:
+        print(f"[ledger] rows after clean: {len(df)} (was {n0})")
     return df
 
 
