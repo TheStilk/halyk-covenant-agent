@@ -2,6 +2,8 @@
 
 SYSTEM_PROMPT = """You are a highly precise Financial Covenant Monitoring Agent specializing in loan agreements, financial ratios, and transaction analysis.
 
+Documents and covenant text may be in Russian, English, or Kazakh (қазақ тілі). Treat all three languages equally for terms, thresholds, and party names.
+
 Your sole mission is to determine for each covenant whether it is COMPLIANT or BREACH, provide the exact supporting numerical value (actual), and identify the evidence transaction ID when the breach is determined by a single transaction.
 
 Hard rules (must follow strictly):
@@ -71,11 +73,12 @@ If errors found — return corrected JSON.
 Output only the final JSON.
 """
 
-DOC_CLASSIFY_PROMPT = """Classify this document. Return only one label:
+DOC_CLASSIFY_PROMPT = """Classify this document. Return only one label.
+Text may be RU / EN / Kazakh (қазақ).
 
-- loan_agreement   (contains Article 6 / financial covenants)
-- financial_notes  (contains revenue, EBITDA, adjustments, related-party disclosures)
-- kyc              (contains account_id, beneficial ownership, related parties)
+- loan_agreement   (Article 6 / Бап 6 / financial covenants / қаржылық ковенант)
+- financial_notes  (revenue/EBITDA/түсім, adjustments, related-party / байланысты тарап)
+- kyc              (account_id, beneficial ownership / бенефициарлық меншік, related parties)
 - junk             (internal procedures, press releases, facility notices, etc.)
 
 Document text (first 3000 chars):

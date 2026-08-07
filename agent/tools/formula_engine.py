@@ -31,18 +31,22 @@ _THRESHOLD_RE = re.compile(
     rf"не\s+превышал[оаи]?\s+({_NUM_DEC})\s*[xх]?"
     rf"|не\s+превыша[ею]т\s+\$?\s*({_NUM_MONEY})"
     rf"|не\s+менее\s+({_NUM_DEC})\s*[xх]?"
-    rf"|не\s+менее\s+\$\s*({_NUM_MONEY})"
+    rf"|не\s+менее\s+\$?\s*({_NUM_MONEY})"
     rf"|ниже\s+величины\s+({_NUM_DEC})\s*[xх]?"
     rf"|составлял[оаи]?\s+не\s+менее\s+({_NUM_DEC})\s*[xх]?"
-    rf"|составлял[оаи]?\s+не\s+менее\s+\$\s*({_NUM_MONEY})"
+    rf"|составлял[оаи]?\s+не\s+менее\s+\$?\s*({_NUM_MONEY})"
     rf"|превышал[оаи]?\s+({_NUM_DEC})\s*[xх]"
     rf"|at\s+least\s+\$?\s*({_NUM_MONEY})"
     rf"|not\s+exceed\s+\$?\s*({_NUM_MONEY})"
     rf"|shall\s+not\s+exceed\s+({_NUM_DEC})\s*[xх]?"
     rf"|minimum\s+of\s+({_NUM_DEC})\s*[xх]?"
-    # Kazakh: кемінде / аспауы тиіс
+    # Kazakh: кемінде / кем емес / төмендемеу / аспауы тиіс
     rf"|кемінде\s+\$?\s*({_NUM_MONEY})"
     rf"|кемінде\s+({_NUM_DEC})\s*[xх]?"
+    rf"|кем\s+емес\s+\$?\s*({_NUM_MONEY})"
+    rf"|кем\s+емес\s+({_NUM_DEC})\s*[xх]?"
+    rf"|төмендемеу(?:і)?\s+\$?\s*({_NUM_MONEY})"
+    rf"|төмендемеу(?:і)?\s+({_NUM_DEC})\s*[xх]?"
     rf"|аспау(?:ы|ға)?\s+(?:тиіс\s+)?\$?\s*({_NUM_MONEY})"
     rf"|аспау(?:ы|ға)?\s+(?:тиіс\s+)?({_NUM_DEC})\s*[xх]?"
     # ≤/≥: reject "≤ 2025 года" as a covenant thr
@@ -56,56 +60,80 @@ _MONEY_RE = re.compile(rf"\$\s*({_NUM_MONEY})")
 # Latin x OR Cyrillic х (common OCR / RU PDFs)
 _RATIO_RE = re.compile(rf"({_NUM_DEC})\s*[xх]\b", re.I)
 
+_MIN_DIR_RE = re.compile(
+    r"минимальн|не\s+менее|не\s+допускать\s+снижения|below|at\s+least|minimum|"
+    r"кемінде|кем\s+емес|төмендемеу",
+    re.I,
+)
+_MAX_DIR_RE = re.compile(
+    r"максимальн|не\s+превыш|не\s+более|не\s+допускать,?\s+чтобы|"
+    r"maximum|not\s+exceed|ceiling|no\s+more\s+than|"
+    r"аспау|аспауы\s+тиіс|аспауға|ең\s+к[өо]п",
+    re.I,
+)
+
+
+def _first_threshold_group(text: str) -> Optional[float]:
+    """Pull first numeric group from keyword threshold patterns (incl. bare money)."""
+    m = _THRESHOLD_RE.search(text)
+    if not m:
+        return None
+    for g in m.groups():
+        if g:
+            return _to_float(g)
+    return None
+
 
 def parse_threshold(text: str) -> tuple[Optional[float], str]:
     """Return (threshold_value, direction) where direction is 'max' or 'min'."""
     low = text.lower()
-    # Prefer explicit ratio with x first for ratio covenants
-    is_min = bool(
-        re.search(
-            r"минимальн|не\s+менее|не\s+допускать\s+снижения|below|at\s+least|minimum|"
-            r"кемінде|кем\s+емес|төмендемеу",
-            low,
-        )
-    )
-    is_max = bool(
-        re.search(
-            r"максимальн|не\s+превыш|не\s+более|не\s+допускать,?\s+чтобы|"
-            r"maximum|not\s+exceed|ceiling|no\s+more\s+than|"
-            r"аспау|аспауы\s+тиіс|аспауға|ең\s+к[өо]п",
-            low,
-        )
-    )
+    is_min = bool(_MIN_DIR_RE.search(low))
+    is_max = bool(_MAX_DIR_RE.search(low))
 
-    # Money thresholds
     money = _MONEY_RE.findall(text)
     ratios = _RATIO_RE.findall(text)
+    kw_thr = _first_threshold_group(text)
 
-    # For min revenue style — money threshold with "не менее"
+    def _pick(direction: str) -> tuple[Optional[float], str]:
+        if direction == "min":
+            if money:
+                return _to_float(money[0]), "min"
+            if ratios:
+                return _to_float(ratios[0]), "min"
+            if kw_thr is not None:
+                return kw_thr, "min"
+        else:
+            if ratios:
+                return _to_float(ratios[0]), "max"
+            if money:
+                return _to_float(money[0]), "max"
+            if kw_thr is not None:
+                return kw_thr, "max"
+        return None, direction
+
+    # For min revenue style — money / ratio / keyword thr
     if is_min and not is_max:
-        if money:
-            return _to_float(money[0]), "min"
-        if ratios:
-            return _to_float(ratios[0]), "min"
+        val, d = _pick("min")
+        if val is not None:
+            return val, d
     if is_max and not is_min:
-        if ratios:
-            return _to_float(ratios[0]), "max"
-        if money:
-            return _to_float(money[0]), "max"
+        val, d = _pick("max")
+        if val is not None:
+            return val, d
 
-    # Both signals: prefer based on "минимальн"/"максимальн" first word
-    if re.search(r"минимальн|кемінде", low):
-        if money:
-            return _to_float(money[0]), "min"
-        if ratios:
-            return _to_float(ratios[0]), "min"
-    if re.search(r"максимальн|аспау|ең\s+к[өо]п", low):
-        if ratios:
-            return _to_float(ratios[0]), "max"
-        if money:
-            return _to_float(money[0]), "max"
+    # Both signals: prefer explicit min/max family words first
+    if re.search(r"минимальн|кемінде|кем\s+емес|төмендемеу", low):
+        val, d = _pick("min")
+        if val is not None:
+            return val, d
+    if re.search(r"максимальн|аспау|ең\s+к[өо]п|не\s+превыш", low):
+        val, d = _pick("max")
+        if val is not None:
+            return val, d
 
-    # Fallback
+    # Fallback: keyword thr still wins over bare guess
+    if kw_thr is not None:
+        return kw_thr, "min" if is_min and not is_max else ("max" if is_max or not is_min else "min")
     if ratios:
         return _to_float(ratios[0]), "max" if is_max or not is_min else "min"
     if money:
@@ -310,7 +338,11 @@ def detect_formula_id(covenant_text: str) -> str:
             return "max_related_party"
         return "rp_to_revenue"
     if ("выручк" in t or "түсім" in t or "кіріс" in t) and (
-        "не менее" in t or "минимальн" in t or "кемінде" in t
+        "не менее" in t
+        or "минимальн" in t
+        or "кемінде" in t
+        or "кем емес" in t
+        or "төмендемеу" in t
     ):
         return "min_revenue"
     if "капитальн" in t or "капиталдық" in t:
