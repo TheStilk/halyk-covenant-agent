@@ -142,16 +142,33 @@ def analyze_all_covenants_node(state: AgentState) -> dict[str, Any]:
                 continue
             if not text:
                 print(f"[analyze] missing covenant text {sc}/{cid} → evaluate empty")
-            verdict = analyze_one_covenant(
-                scenario_id=sc,
-                account_id=account_id,
-                covenant_id=cid,
-                covenant_text=text,
-                metrics=metrics_obj,
-                use_llm=use_llm and bool(text),
-            )
-            reason_l = (verdict.reasoning or "").lower()
             cell_key = f"{sc}/{cid}"
+            # Isolate per-cell failures so one bad PDF/bug cannot kill phase3
+            try:
+                verdict = analyze_one_covenant(
+                    scenario_id=sc,
+                    account_id=account_id,
+                    covenant_id=cid,
+                    covenant_text=text,
+                    metrics=metrics_obj,
+                    use_llm=use_llm and bool(text),
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[analyze] CELL FAIL {cell_key}: {exc} → BREACH/0.0")
+                results.append(
+                    FinalCovenantResult(
+                        scenario_id=sc,
+                        covenant_id=cid,
+                        status="BREACH",
+                        actual=0.0,
+                        evidence_txn_id=None,
+                        confidence=0.0,
+                        reasoning=f"best-effort: analyze exception: {exc}",
+                    )
+                )
+                continue
+
+            reason_l = (verdict.reasoning or "").lower()
             if is_unknown_formula_verdict(verdict) or "unknown" in reason_l:
                 unknown_formula_cells.append(cell_key)
             if "[llm" in reason_l or "llm_fallback" in reason_l or "llm_reflect" in reason_l:

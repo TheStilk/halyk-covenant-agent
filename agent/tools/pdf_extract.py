@@ -295,17 +295,55 @@ def extract_pdf_document(file_path: str) -> ExtractedDocument:
 # (audit finding V3).
 SUPPORTED_SUFFIXES = (".pdf", ".txt", ".csv", ".md", ".json")
 
+# Soft OOM guards (battle: huge reports / mislabeled binaries)
+_MAX_TABLE_PAGES = 20
+_MAX_TEXT_FILE_BYTES = 8 * 1024 * 1024  # 8 MiB
+
 
 def extract_text_file(file_path: str) -> dict[str, Any]:
     """Read a plain-text-ish document, trying the encodings this corpus uses."""
     path = Path(file_path)
     errors: list[str] = []
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return {
+            "path": str(path),
+            "text": "",
+            "page_count": 0,
+            "method": "failed",
+            "tables": [],
+            "meta": {"extract_errors": [str(exc)], "unreadable": True},
+        }
+    if size > _MAX_TEXT_FILE_BYTES:
+        msg = f"text file too large ({size} bytes > {_MAX_TEXT_FILE_BYTES}); skip"
+        print(f"[extract] {path.name}: {msg}")
+        return {
+            "path": str(path),
+            "text": "",
+            "page_count": 0,
+            "method": "failed",
+            "tables": [],
+            "meta": {
+                "extract_errors": [msg],
+                "unreadable": True,
+                "size_bytes": size,
+            },
+        }
+
     for encoding in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
         try:
             text = path.read_text(encoding=encoding)
         except (UnicodeDecodeError, LookupError) as exc:
             errors.append(f"{encoding}: {exc}")
             continue
+        # latin-1 never fails on bytes — reject if almost no printable text (binary as .txt)
+        if encoding == "latin-1":
+            sample = text[:4000]
+            printable = sum(1 for c in sample if c.isprintable() or c in "\n\r\t")
+            if sample and printable / max(len(sample), 1) < 0.7:
+                errors.append("latin-1: low printable ratio (likely binary)")
+                continue
         return {
             "path": str(path),
             "text": text,
@@ -349,9 +387,12 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
     tables: list[Any] = []
     with pdfplumber.open(path) as pdf:
         page_count = len(pdf.pages)
-        for page in pdf.pages:
+        for i, page in enumerate(pdf.pages):
             t = page.extract_text() or ""
             pages_text.append(t)
+            # Tables only on first N pages — full-doc table walk OOMs on huge PDFs
+            if i >= _MAX_TABLE_PAGES:
+                continue
             try:
                 page_tables = page.extract_tables() or []
                 for tbl in page_tables:
@@ -363,7 +404,9 @@ def _extract_pdfplumber(path: Path) -> dict[str, Any]:
         "page_count": page_count,
         "method": "pdfplumber",
         "tables": tables,
-        "meta": {},
+        "meta": {
+            "table_pages_scanned": min(page_count, _MAX_TABLE_PAGES),
+        },
     }
 
 
