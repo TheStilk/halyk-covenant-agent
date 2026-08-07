@@ -62,12 +62,20 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
             f"clauses={list(best.keys())}"
         )
 
-    # Scenarios with no classified loan: scan all loan agreements
+    # Incomplete scenarios (empty or partial template): scan all loans + orphans
     scenario_ids = state.get("scenario_ids") or list(sc_to_acc.keys())
-    missing = [s for s in scenario_ids if not covenants_by_scenario.get(s)]
+
+    def _incomplete(sc: str) -> bool:
+        have = covenants_by_scenario.get(sc) or {}
+        return len(have) < len(covenant_ids_for_scenario(sc))
+
+    incomplete = [s for s in scenario_ids if _incomplete(s)]
     orphan_global: dict[str, str] = {}
-    if missing:
-        print(f"[covenants] missing loan for {missing}; scanning all loan_agreements")
+    if incomplete:
+        print(
+            f"[covenants] incomplete loan clauses for {incomplete}; "
+            f"scanning all loan_agreements"
+        )
         all_loans = [
             d for d in doc_index if d.get("doc_type") == DocType.LOAN_AGREEMENT.value
         ]
@@ -87,30 +95,37 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
                 continue
             if sc:
                 if not covenants_by_scenario.get(sc):
-                    covenants_by_scenario[sc] = as_dict
+                    covenants_by_scenario[sc] = dict(as_dict)
                     print(f"[covenants] recovered {sc} from {path}")
                 else:
                     _merge_clauses(covenants_by_scenario[sc], as_dict)
             else:
-                # Unscoped loan: collect for global fill of still-empty scenarios
+                # Unscoped loan: pool clauses to fill missing ids on any scenario
                 _merge_clauses(orphan_global, as_dict)
                 print(
                     f"[covenants] orphan loan (no scenario_id) from {path}: "
                     f"clauses={list(as_dict.keys())}"
                 )
 
-    # Apply orphan/global clauses only to scenarios still missing any clause
+    # Orphans fill *missing covenant ids* on empty OR partial scenarios (setdefault)
     if orphan_global:
-        still_missing = [s for s in scenario_ids if not covenants_by_scenario.get(s)]
-        for sc in still_missing:
-            # Filter to template ids for that scenario
+        for sc in scenario_ids:
             want = set(covenant_ids_for_scenario(sc))
-            filled = {cid: t for cid, t in orphan_global.items() if cid in want}
-            if filled:
-                covenants_by_scenario[sc] = filled
+            existing = dict(covenants_by_scenario.get(sc) or {})
+            need = want - set(existing.keys())
+            if not need:
+                continue
+            added: list[str] = []
+            for cid in need:
+                text = orphan_global.get(cid)
+                if text:
+                    existing[cid] = text
+                    added.append(cid)
+            if added:
+                covenants_by_scenario[sc] = existing
                 print(
                     f"[covenants] applied orphan/global clauses to {sc}: "
-                    f"{list(filled.keys())}"
+                    f"filled={added} now={list(existing.keys())}"
                 )
 
     documents = {
