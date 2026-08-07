@@ -43,7 +43,7 @@ cp .env.example .env
 | `FORMULA_READER_MAX_TEXT_CHARS` | `900` | clip текста ковенанта в reader |
 | `MAX_TEXT_FILE_MB` | `16` | skip `.txt/.csv/...` larger than N MiB (OOM guard) |
 | `MAX_TABLE_PAGES` | `32` | pdfplumber `extract_tables` only first N pages |
-| `LLM_MAX_TOKENS` | `8192` | max completion tokens |
+| `LLM_MAX_TOKENS` | `1024` | max completion tokens (JSON/FormulaSpec; floor 512) |
 | `CLASSIFY_USE_LLM` | `false` | optional LLM classify |
 | `CONFIDENCE_THRESHOLD` | `0.85` | low-conf boundary |
 

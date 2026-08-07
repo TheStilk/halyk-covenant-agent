@@ -414,7 +414,7 @@ def _llm_verdict_analyze(
         metrics=metrics.summary_for_llm(),
         transactions="\n".join(tx_lines[:80]),
     )
-    # Prefer structured; fallback to system+user parse
+    # Prefer structured; fallback to system+user parse (never double-burn 429)
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -424,10 +424,18 @@ def _llm_verdict_analyze(
         if isinstance(result, CovenantVerdict):
             return result
         return CovenantVerdict.model_validate(result)
-    except Exception:
-        raw = invoke_with_system(llm, SYSTEM_PROMPT, user, use_cache_control=True)
-        content = raw.content if hasattr(raw, "content") else str(raw)
-        return _parse_verdict_json(content)
+    except Exception as exc:
+        from agent.tools.llm import _is_rate_limit_error
+
+        if _is_rate_limit_error(exc):
+            # Second call would hit the same limit and only waste timeout budget
+            raise
+        try:
+            raw = invoke_with_system(llm, SYSTEM_PROMPT, user, use_cache_control=True)
+            content = raw.content if hasattr(raw, "content") else str(raw)
+            return _parse_verdict_json(content)
+        except Exception as exc2:
+            raise exc2 from exc
 
 
 def _llm_reflect(

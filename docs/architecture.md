@@ -209,7 +209,7 @@ Env (defaults battle-safe):
 | `LLM_FORMULA_READER_ONLY_UNKNOWN` | true | only when det weak |
 | `FORMULA_READER_PREFER_DET_ON_MISMATCH` | true | prefer det if det known |
 | `FORMULA_READER_MAX_TEXT_CHARS` | 900 | clip covenant text to reader |
-| `LLM_MAX_TOKENS` | 8192 | completion budget |
+| `LLM_MAX_TOKENS` | 1024 | completion budget (FormulaSpec/JSON; floor 512) |
 
 Модель **только** из env (`LLM_MODEL` / `MODEL_LABEL`).  
 Open set без ключа: **100%** на formula engine.
