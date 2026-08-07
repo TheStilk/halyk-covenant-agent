@@ -6,17 +6,23 @@
 uv sync
 ```
 
-Системные утилиты (рекомендуется):
+### Системные утилиты (обязательны для battle OCR)
 
 | Утилита | Зачем |
 |---------|--------|
 | `pdftotext` (poppler) | fallback извлечения текста |
 | `pdftoppm` (poppler) | рендер страниц KYC / notes для OCR |
-| `tesseract` (**eng+rus+kaz** обязательны) | OCR KYC / notes tables (KZ docs too) |
+| `tesseract` + langs **eng, rus, kaz** | OCR KYC / notes tables |
+
+Полные команды для **Debian/Ubuntu**, **Fedora**, **Arch**: [README.md](../README.md) → «Системные пакеты (Linux)».
 
 ```bash
-# Debian/Ubuntu (пример)
-sudo apt install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
+# Debian/Ubuntu
+sudo apt install -y poppler-utils \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-kaz
+
+# проверка
+tesseract --list-langs | grep -E '^(eng|rus|kaz)$'
 ```
 
 ---
@@ -47,10 +53,14 @@ cp .env.example .env
 | `MAX_TEXT_FILE_MB` | `16` | skip `.txt/.csv/...` larger than N MiB (OOM guard) |
 | `MAX_TABLE_PAGES` | `32` | pdfplumber `extract_tables` only first N pages |
 | `LLM_MAX_TOKENS` | `1024` | max completion tokens (JSON/FormulaSpec; floor 512) |
+| `LLM_TIMEOUT_SEC` | `60` | HTTP timeout per LLM call |
+| `LLM_MAX_RETRIES` | `2` | retries (+ longer sleep on 429) |
 | `CLASSIFY_USE_LLM` | `false` | optional LLM classify |
+| `CLASSIFY_API_KEY` / `CLASSIFY_BASE_URL` / `CLASSIFY_MODEL` | — | optional 2nd endpoint (classify only) |
 | `CONFIDENCE_THRESHOLD` | `0.85` | low-conf boundary |
+| `TESSERACT_LANGS` | `eng+rus+kaz` | OCR languages (preflight) |
 
-**Смена провайдера/модели:** только env, без правок кода.
+**Смена провайдера/модели:** только env, без правок кода (OpenAI-compatible, в т.ч. Clodex и др.).
 
 ```bash
 export LLM_API_KEY=...
@@ -63,6 +73,13 @@ uv run python scripts/smoke_llm.py   # available / structured smoke
 Без ключей пайплайн полностью детерминированный.
 
 ---
+
+## One-shot battle
+
+```bash
+NO_LLM=1 ./scripts/battle_run.sh /path/to/dataset
+# OCR check → uv sync → clear doc_cache → phase3 → validate
+```
 
 ## CLI (`main.py`)
 

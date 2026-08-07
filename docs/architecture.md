@@ -34,6 +34,8 @@ Phase 2/3 — полный граф до `collect_results`.
 
 **Принцип:** deterministic first, LLM only fallback. Не переписывать formula engine ради LLM.
 
+**Battle hardening (post-audit):** safe div0 (9999 sentinel), FX skip without rate, signed P&L nets, per-cell crash isolation, portable cache paths, RU/EN/**KZ** classify & thr keywords, OOM guards, `scripts/battle_run.sh`.
+
 ---
 
 ## AgentState
@@ -170,7 +172,9 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 | `payroll_total` | payroll + severance (notes) |
 | `max_single_overhead` | max(payroll, utilities) category totals |
 | `financing_to_ebitda` | Financing / EBITDA (springing) |
-| `q4_revenue` | revenue in Q4 |
+| `q4_revenue` | revenue in Q4 (calendar months 10–12, any year) |
+
+**Ratio den ≤ 0:** min covenant → COMPLIANT, actual≈9999; max → BREACH, actual≈9999 (finite, thr-consistent).
 
 **Unknown formula** (`detect_formula_id` → `unknown`):
 
@@ -191,14 +195,14 @@ CSV может содержать `amount=NaN`. Суммы берутся из n
 
 ```text
 1. Always: det = evaluate_covenant(...)
-2. LLM unavailable / reader ERR → det
+2. LLM unavailable / reader ERR / compute ERR / 429 → det
 3. det high-conf known formula → det   # no LLM call (open-set + RPM)
 4. det unknown / low-conf + LLM_*:
       FormulaSpec (LLM) → compute_from_formula_spec (code)
 5. mismatch:
       known-like det → det
       unknown det → LLM compute
-6. never null status/actual
+6. never null status/actual; analyze_all isolates per-cell exceptions
 ```
 
 Env (defaults battle-safe):
@@ -208,10 +212,11 @@ Env (defaults battle-safe):
 | `USE_LLM_FORMULA_READER` | true | enable reader path |
 | `LLM_FORMULA_READER_ONLY_UNKNOWN` | true | only when det weak |
 | `FORMULA_READER_PREFER_DET_ON_MISMATCH` | true | prefer det if det known |
-| `FORMULA_READER_MAX_TEXT_CHARS` | 900 | clip covenant text to reader |
-| `LLM_MAX_TOKENS` | 1024 | completion budget (FormulaSpec/JSON; floor 512) |
+| `FORMULA_READER_MAX_TEXT_CHARS` | 900 | head+tail clip covenant text |
+| `LLM_MAX_TOKENS` | 1024 | completion budget (floor 512) |
 
 Модель **только** из env (`LLM_MODEL` / `MODEL_LABEL`).  
+Опциональный 2-й endpoint: `CLASSIFY_*` (classify only; default off).  
 Open set без ключа: **100%** на formula engine.
 
 ---
@@ -220,31 +225,38 @@ Open set без ключа: **100%** на formula engine.
 
 `assess_extract_quality(text)` вместо `len(text) ≥ 40`:
 
-- meaningful length, доля кириллицы, маркеры ACC/TXN/$/Статья|Article, alnum density  
+- meaningful length, доля кириллицы (RU+KZ letters), маркеры ACC/TXN/$/Статья|Article|Бап|Тармақ  
 - backend: pdfplumber → pymupdf → pdftotext; первый `ok` принимается  
-- все плохие → best score + `method=…+degraded` + WARNING (в `diagnostics.bad_extracts`)  
+- tables: only first `MAX_TABLE_PAGES` (default 32)  
+- text files: skip if `> MAX_TEXT_FILE_MB` (default 16)  
+- все плохие → best score + degraded + WARNING (`diagnostics.bad_extracts`)  
+- OCR KYC/notes: **metrics** path (`pdftoppm` + tesseract eng+rus+kaz), not only extract  
+
+Cache: content-hash + quality version; on hit rewrite `doc.path` to current machine.
 
 ---
 
 ## Covenant extraction (template-driven)
 
-1. Clause headers по ids из template (`Пункт 6.1`, `Clause 7.2`, …)  
-2. Fallback: `Статья N` / `Article N` (N = major number ids)  
-3. Split только на ids из template (не хардкод 6.1/6.2/6.3)
+1. Clause headers: `Пункт` / `Clause` / `Тармақ` + ids (line-start only)  
+2. Fallback: `Статья N` / `Article N` / `Бап N`  
+3. Multi-loan merge by id; orphan loans fill missing ids  
+4. Split только на ids из template  
 
 ---
 
-## Классификация документов
+## Классификация документов (RU / EN / KZ)
 
-| Тип | Сигналы |
-|-----|---------|
-| `loan_agreement` | ДОГОВОР БАНКОВСКОГО ЗАЙМА, Статья N |
-| `financial_notes` | Примечания, AUP, Consolidated FS, PPE rollforward |
-| `kyc` | Досье KYC, НАДЛЕЖАЩАЯ ПРОВЕРКА |
-| `junk` | пресс-релизы, АХО, superseded loan, internal procedures |
+| Тип | Сигналы (примеры) |
+|-----|-------------------|
+| `loan_agreement` | ДОГОВОР БАНКОВСКОГО ЗАЙМА, LOAN AGREEMENT, Несие/Қарыз шарты, Бап 6 ковенант |
+| `financial_notes` | Примечания/отчётности, Notes to FS, Қаржылық есептілікке ескертпе, AUP |
+| `kyc` | Досье KYC, Customer Due Diligence, Клиентті тиісінше тексеру |
+| `junk` | пресс-релизы, АХО, superseded, ішкі регламент |
 
-Account: `prefer_borrower_account` — mapping ledger → non-noise (`ACC-9*`) → first.  
-Company: JSC / LLC / LLP / ТОО / АО / …  
+Bare `Пункт 6.1` — **weak only** (избегаем FP на аренде).  
+Account: prefer mapped / non-noise (`ACC-9*`).  
+ 
 
 ---
 
