@@ -332,9 +332,14 @@ def _find_evidence_for_sum(
     *,
     recompute: Callable[[set[str]], float],
 ) -> Optional[str]:
-    """Find a single txn whose removal flips the verdict."""
+    """Find a single txn whose removal flips the verdict.
+
+    If no single txn flips the status (many small contributions) and the cell
+    is BREACH, fall back to the largest |amount| candidate — same idea as
+    max_single_overhead, so aggregate breaches still get a non-null evidence.
+    """
     base_status = _status(base_actual, threshold, direction)
-    candidates = txn_ids or []
+    candidates = list(txn_ids or [])
     # Also try related reclass-driving txns
     for r in metrics.reclassifications:
         if r.txn_id and r.txn_id not in candidates:
@@ -348,7 +353,21 @@ def _find_evidence_for_sum(
         alt_status = _status(alt, threshold, direction)
         if alt_status != base_status:
             return tid
-    return None
+
+    # Largest-txn fallback when flip-test fails (aggregate breach)
+    if base_status != "BREACH" or not candidates:
+        return None
+    by_id = {t.txn_id: t for t in metrics.transactions}
+    best_tid: Optional[str] = None
+    best_abs = -1.0
+    for tid in candidates:
+        t = by_id.get(tid)
+        if t is None or t.excluded:
+            continue
+        if t.abs_amount > best_abs:
+            best_abs = t.abs_amount
+            best_tid = tid
+    return best_tid
 
 
 # ---------------------------------------------------------------------------

@@ -172,15 +172,16 @@ def _score(patterns: list[re.Pattern[str]], text: str, weight: float = 1.0) -> f
 def classify_text_rules(text: str, path: str = "") -> DocClassification:
     """Rule-based document classification from full or partial text."""
     head = text[:12000]  # enough for headers + early body
-    head_lower_zone = text[:4000]
+    # Rejection markers (superseded/draft/junk banners) may sit after a long TOC
+    reject_zone = text[:12000]
 
     loan_score = _score(_LOAN_STRONG, head, 3.0) + _score(_LOAN_WEAK, head, 0.5)
     notes_score = _score(_NOTES_STRONG, head, 3.0) + _score(_NOTES_WEAK, head, 0.4)
     kyc_score = _score(_KYC_STRONG, head, 3.0) + _score(_KYC_WEAK, head, 0.3)
-    junk_score = _score(_JUNK_STRONG, head_lower_zone, 2.5)
+    junk_score = _score(_JUNK_STRONG, reject_zone, 2.5)
 
     # Superseded loan → junk (do not use old covenants)
-    if _SUPERSEDED.search(head_lower_zone) and loan_score > 0:
+    if _SUPERSEDED.search(reject_zone) and loan_score > 0:
         loan_score = 0.0
         junk_score += 4.0
 
@@ -189,7 +190,7 @@ def classify_text_rules(text: str, path: str = "") -> DocClassification:
         kyc_score = min(kyc_score, 1.0)
 
     # Draft intermediate AUP still counts as financial_notes but lower conf later
-    is_draft_notes = bool(_DRAFT_NOTES.search(head_lower_zone))
+    is_draft_notes = bool(_DRAFT_NOTES.search(reject_zone))
 
     scores = {
         DocType.LOAN_AGREEMENT: loan_score,
