@@ -110,6 +110,13 @@ def _status(actual: float, threshold: float, direction: str) -> str:
     return "COMPLIANT" if actual <= threshold + 1e-12 else "BREACH"
 
 
+# Finite stand-in for ±inf on ratio edges (submission forbids non-finite actual).
+# Chosen so status is consistent with a naive thr re-check:
+#   min + den<=0 → COMPLIANT and actual >= thr
+#   max + den<=0 → BREACH    and actual >  thr
+_RATIO_EDGE_SENTINEL = 9999.0
+
+
 def _safe_ratio(
     num: float,
     den: float,
@@ -124,9 +131,9 @@ def _safe_ratio(
 
     den > 0 → normal num/den and threshold compare.
     den <= 0:
-      min (coverage floors) → COMPLIANT, actual=0.0
+      min (coverage floors) → COMPLIANT, actual=max(thr, 9999)
         (no interest / no base → infinite coverage; never false BREACH)
-      max (leverage ceilings) → BREACH, actual=0.0
+      max (leverage ceilings) → BREACH, actual=9999
         (non-positive EBITDA etc. → cannot prove under cap; never false COMPLIANT)
 
     actual is never ±inf (submission/validate must stay finite).
@@ -138,18 +145,25 @@ def _safe_ratio(
             return actual, status, raw, ""
         actual = _r2(raw)
         return actual, _status(raw, thr, direction), raw, ""
+    # Edge: report a large finite actual that agrees with status vs thr
+    try:
+        thr_f = float(thr)
+    except (TypeError, ValueError):
+        thr_f = 0.0
     if direction == "min":
+        actual = _r2(max(thr_f, _RATIO_EDGE_SENTINEL))
         return (
-            0.0,
+            actual,
             "COMPLIANT",
             0.0,
-            "den<=0 → COMPLIANT for min (infinite/undefined coverage)",
+            f"den<=0 → COMPLIANT actual={actual} (infinite coverage sentinel)",
         )
+    actual = _r2(max(_RATIO_EDGE_SENTINEL, thr_f + 1.0 if thr_f > 0 else _RATIO_EDGE_SENTINEL))
     return (
-        0.0,
+        actual,
         "BREACH",
         0.0,
-        "den<=0 → BREACH for max (infinite/undefined leverage)",
+        f"den<=0 → BREACH actual={actual} (infinite leverage sentinel)",
     )
 
 
