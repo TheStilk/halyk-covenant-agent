@@ -128,10 +128,10 @@ def extract_covenants_for_all(state: AgentState) -> dict[str, Any]:
                     f"filled={added} now={list(existing.keys())}"
                 )
 
-    documents = {
-        "covenants_by_scenario": covenants_by_scenario,
-        "path_to_text_keys": list(path_to_text.keys()),
-    }
+    # Merge into existing documents bag (do not wipe keys from other nodes)
+    documents = dict(state.get("documents") or {})
+    documents["covenants_by_scenario"] = covenants_by_scenario
+    documents["path_to_text_keys"] = list(path_to_text.keys())
 
     n_full = sum(
         1

@@ -32,6 +32,9 @@ cp .env.example .env
 | `TEAM_NAME` | `Сычуанский Соус` | submission.team |
 | `CONTACT_EMAIL` | обе почты команды | submission.contact_email |
 | `DATA_DIR` | `./agentic-bank-public` | датасет |
+| `LEDGER_PATH` | `$DATA_DIR/master_ledger_2025.csv` | ledger CSV (override if renamed) |
+| `TEMPLATE_PATH` | `$DATA_DIR/submission_template.json` | submission template |
+| `DOCUMENTS_DIR` | `$DATA_DIR/documents` | PDF/docs folder |
 | `DOC_CACHE_DIR` | `./doc_cache` | кэш PDF |
 | `LLM_API_KEY` | — | OpenAI-compatible key |
 | `LLM_BASE_URL` | — | `https://host/v1` |

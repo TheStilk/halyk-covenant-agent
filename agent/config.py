@@ -15,11 +15,12 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "agentic-bank-public"))
-DOCUMENTS_DIR = DATA_DIR / "documents"
-LEDGER_PATH = DATA_DIR / "master_ledger_2025.csv"
-TEMPLATE_PATH = DATA_DIR / "submission_template.json"
-GROUND_TRUTH_PATH = DATA_DIR / "ground_truth.json"
-SUBMISSION_PATH = ROOT_DIR / "submission.json"
+# Optional overrides if private set renames files; default = CASE layout under DATA_DIR
+DOCUMENTS_DIR = Path(os.getenv("DOCUMENTS_DIR", DATA_DIR / "documents"))
+LEDGER_PATH = Path(os.getenv("LEDGER_PATH", DATA_DIR / "master_ledger_2025.csv"))
+TEMPLATE_PATH = Path(os.getenv("TEMPLATE_PATH", DATA_DIR / "submission_template.json"))
+GROUND_TRUTH_PATH = Path(os.getenv("GROUND_TRUTH_PATH", DATA_DIR / "ground_truth.json"))
+SUBMISSION_PATH = Path(os.getenv("SUBMISSION_PATH", ROOT_DIR / "submission.json"))
 DOC_CACHE_DIR = Path(os.getenv("DOC_CACHE_DIR", ROOT_DIR / "doc_cache"))
 
 # ---------------------------------------------------------------------------

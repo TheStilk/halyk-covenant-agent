@@ -22,14 +22,15 @@ from agent.tools.pdf_extract import (
 # Strong signal patterns (order matters for scoring)
 # ---------------------------------------------------------------------------
 
+# OCR / RU often drops ё → е; allow both via [её]
 _LOAN_STRONG = [
     re.compile(r"ДОГОВОР\s+БАНКОВСКОГО\s+ЗАЙМА", re.I),
     re.compile(r"LOAN\s+AGREEMENT", re.I),
     re.compile(r"Договор\s+об\s+открытии\s+кредитн\w*\s+лин", re.I),
     re.compile(r"Статья\s+6\s*[—\-–]\s*Финансовые\s+ковенанты", re.I),
     re.compile(r"Article\s+6\s*[—\-–].{0,40}[Cc]ovenant", re.I),
-    re.compile(r"Пункт\s+6\.1", re.I),
-    re.compile(r"старший\s+обеспеченный\s+заём", re.I),
+    # bare "Пункт 6.1" is NOT strong — too many non-loan docs use clause numbers
+    re.compile(r"старший\s+обеспеченный\s+за[её]м", re.I),
 ]
 
 _LOAN_WEAK = [
@@ -38,11 +39,12 @@ _LOAN_WEAK = [
     re.compile(r"кредитн\w*\s+лин\w*", re.I),
     re.compile(r"credit\s+facilit(?:y|ies)", re.I),
     re.compile(r"Кредитор", re.I),
-    re.compile(r"Заёмщик", re.I),
+    re.compile(r"За[её]мщик", re.I),
+    re.compile(r"Пункт\s+6\.\d+", re.I),  # weak only — needs other loan signals
 ]
 
 _NOTES_STRONG = [
-    re.compile(r"Примечания\s+к\s+финансовой\s+отчётности", re.I),
+    re.compile(r"Примечания\s+к\s+финансовой\s+отч[её]тности", re.I),
     re.compile(r"Notes\s+to\s+the\s+Financial\s+Statements", re.I),
     re.compile(r"АУДИТОРСКОЕ\s+ДЕЛО", re.I),
     re.compile(r"Аудиторск\w+\s+заключен", re.I),
@@ -61,7 +63,7 @@ _NOTES_WEAK = [
     re.compile(r"\bEBITDA\b", re.I),
     re.compile(r"Выручка", re.I),
     re.compile(r"\bRevenue\b", re.I),
-    re.compile(r"Капитальные\s+затраты", re.I),
+    re.compile(r"капитальн\w*\s+затрат", re.I),  # any case: капитальных затрат
     re.compile(r"\bCapex\b", re.I),
     re.compile(r"связанн\w+\s+сторон", re.I),
     re.compile(r"related[-\s]?party", re.I),
@@ -72,6 +74,8 @@ _KYC_STRONG = [
     re.compile(r"Досье\s*[«\"]?Знай\s+своего\s+клиента", re.I),
     re.compile(r"НАДЛЕЖАЩАЯ\s+ПРОВЕРКА\s+КЛИЕНТА", re.I),
     re.compile(r"Know\s+Your\s+Customer", re.I),
+    re.compile(r"Customer\s+Due\s+Diligence", re.I),
+    re.compile(r"\bCDD\b"),
     re.compile(r"Проверка\s+связанных\s+сторон\s*[·•\.]", re.I),
     re.compile(r"beneficial\s+owner", re.I),
     re.compile(r"бенефициарн\w+\s+владель", re.I),
@@ -90,7 +94,7 @@ _JUNK_STRONG = [
     re.compile(r"press\s+release", re.I),
     re.compile(r"Уведомление\s+АХО", re.I),
     re.compile(r"ИТ[-\s]?инцидент", re.I),
-    re.compile(r"Политика\s+удалённой", re.I),
+    re.compile(r"Политика\s+удал[её]нной", re.I),
     re.compile(r"Руководство\s+по\s+бренду", re.I),
     re.compile(r"чек[-\s]?лист\s+адаптации", re.I),
     re.compile(r"внутренн\w+\s+регламент", re.I),
