@@ -25,6 +25,7 @@ from agent.tools.pdf_extract import (
 _LOAN_STRONG = [
     re.compile(r"ДОГОВОР\s+БАНКОВСКОГО\s+ЗАЙМА", re.I),
     re.compile(r"LOAN\s+AGREEMENT", re.I),
+    re.compile(r"Договор\s+об\s+открытии\s+кредитн\w*\s+лин", re.I),
     re.compile(r"Статья\s+6\s*[—\-–]\s*Финансовые\s+ковенанты", re.I),
     re.compile(r"Article\s+6\s*[—\-–].{0,40}[Cc]ovenant", re.I),
     re.compile(r"Пункт\s+6\.1", re.I),
@@ -34,6 +35,8 @@ _LOAN_STRONG = [
 _LOAN_WEAK = [
     re.compile(r"финансовые\s+ковенанты", re.I),
     re.compile(r"financial\s+covenant", re.I),
+    re.compile(r"кредитн\w*\s+лин\w*", re.I),
+    re.compile(r"credit\s+facilit(?:y|ies)", re.I),
     re.compile(r"Кредитор", re.I),
     re.compile(r"Заёмщик", re.I),
 ]
@@ -42,6 +45,8 @@ _NOTES_STRONG = [
     re.compile(r"Примечания\s+к\s+финансовой\s+отчётности", re.I),
     re.compile(r"Notes\s+to\s+the\s+Financial\s+Statements", re.I),
     re.compile(r"АУДИТОРСКОЕ\s+ДЕЛО", re.I),
+    re.compile(r"Аудиторск\w+\s+заключен", re.I),
+    re.compile(r"Independent\s+Auditor.?s\s+Report", re.I),
     re.compile(r"согласованных\s+процедур", re.I),
     re.compile(r"Agreed[-\s]?Upon\s+Procedures", re.I),
     re.compile(r"Скорректированная\s+EBITDA", re.I),
