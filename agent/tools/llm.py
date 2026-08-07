@@ -50,21 +50,37 @@ def _make_chat(
     from langchain_openai import ChatOpenAI
 
     # Floor 512 so env LLM_MAX_TOKENS=500 still works; default config is 1024
+    timeout = float(getattr(_cfg, "LLM_TIMEOUT_SEC", 60) or 60)
+    retries = max(0, int(getattr(_cfg, "LLM_MAX_RETRIES", 2) or 0))
     kwargs: dict[str, Any] = {
         "model": model,
         "api_key": api_key,
         "base_url": base_url,
         "temperature": temperature,
         "max_tokens": max(512, int(getattr(_cfg, "LLM_MAX_TOKENS", 1024))),
+        # Always attempt a timeout so hung TCP cannot freeze battle forever
+        "timeout": timeout,
     }
     try:
-        return ChatOpenAI(
-            **kwargs,
-            timeout=_cfg.LLM_TIMEOUT_SEC,
-            max_retries=max(0, _cfg.LLM_MAX_RETRIES),
-        )
+        return ChatOpenAI(**kwargs, max_retries=retries)
     except TypeError:
+        pass
+    # Older/newer LangChain: keep timeout, drop max_retries
+    try:
         return ChatOpenAI(**kwargs)
+    except TypeError:
+        pass
+    # Legacy request_timeout name
+    kwargs.pop("timeout", None)
+    kwargs["request_timeout"] = timeout
+    try:
+        return ChatOpenAI(**kwargs, max_retries=retries)
+    except TypeError:
+        try:
+            return ChatOpenAI(**kwargs)
+        except TypeError:
+            kwargs.pop("request_timeout", None)
+            return ChatOpenAI(**kwargs)
 
 
 @lru_cache(maxsize=16)

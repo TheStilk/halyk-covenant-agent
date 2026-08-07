@@ -9,10 +9,25 @@ hardcoded 6.1/6.2/6.3 list. Block discovery:
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Iterable, Optional, Sequence
 
 from agent.config import COVENANT_IDS
 from agent.models import CovenantText
+
+# Line lead whitespace including NBSP / narrow NBSP (common in PDF text)
+_LEAD_WS = r"[ \t\xa0\u202f\u2007]*"
+
+
+def _normalize_pdf_text(text: str) -> str:
+    """NFKC + collapse PDF NBSP/homoglyph-ish spacing for regex matching."""
+    if not text:
+        return ""
+    s = unicodedata.normalize("NFKC", text)
+    # Non-breaking / exotic spaces → regular space
+    for ch in ("\u00a0", "\u202f", "\u2007", "\u2009", "\u200a", "\ufeff"):
+        s = s.replace(ch, " ")
+    return s
 
 
 def _article_major(covenant_ids: Sequence[str]) -> str:
@@ -38,12 +53,13 @@ def _clause_header_re(covenant_ids: Sequence[str]) -> re.Pattern[str]:
     # Longer first so 6.10 wins over 6.1
     alts = "|".join(re.escape(c) for c in sorted(ids, key=len, reverse=True))
     # Line-start only (MULTILINE ^). RU Пункт / EN Clause / KZ Тармақ
+    # Allow NBSP in lead (PDF often uses \xa0 after NFKC may still leave spaces)
     return re.compile(
         rf"(?:"
-        rf"^[ \t]*Пункт\s+({alts})\b"
-        rf"|^[ \t]*Clause\s+({alts})\b"
-        rf"|^[ \t]*Тармақ\s+({alts})\b"
-        rf"|^[ \t]*({alts})\s*[—\-–.:)]\s+"
+        rf"^{_LEAD_WS}Пункт\s+({alts})\b"
+        rf"|^{_LEAD_WS}Clause\s+({alts})\b"
+        rf"|^{_LEAD_WS}Тармақ\s+({alts})\b"
+        rf"|^{_LEAD_WS}({alts})\s*[—\-–.:)]\s+"
         rf")",
         re.IGNORECASE | re.MULTILINE,
     )
@@ -51,14 +67,15 @@ def _clause_header_re(covenant_ids: Sequence[str]) -> re.Pattern[str]:
 
 def _article_start_re(major: str) -> re.Pattern[str]:
     m = re.escape(major)
+    # [СC] = Cyrillic Es + Latin C (homoglyph in PDF OCR)
     return re.compile(
         rf"(?:"
-        rf"Статья\s+{m}\s*[—\-–:]\s*Финансовые\s+ковенанты"
+        rf"[СC]татья\s+{m}\s*[—\-–:]\s*Финансовые\s+ковенанты"
         rf"|Article\s+{m}\s*[—\-–:]\s*(?:Financial\s+)?Covenants?"
         rf"|ARTICLE\s+{m}\s*[—\-–:]\s*(?:FINANCIAL\s+)?COVENANTS?"
         rf"|Бап\s+{m}\s*[—\-–:]\s*Қаржылық\s+ковенант"
         rf"|Бап\s+{m}\s*[—\-–:]\s*.{0,40}ковенант"
-        rf"|Статья\s+{m}\b"
+        rf"|[СC]татья\s+{m}\b"
         rf"|Article\s+{m}\b"
         rf"|Бап\s+{m}\b"
         rf")",
@@ -76,7 +93,7 @@ def _article_end_re(major: str) -> re.Pattern[str]:
     alts = "|".join(re.escape(x) for x in nxt)
     return re.compile(
         rf"(?:"
-        rf"Статья\s+(?:{alts})\b"
+        rf"[СC]татья\s+(?:{alts})\b"
         rf"|Article\s+(?:{alts})\b"
         rf"|ARTICLE\s+(?:{alts})\b"
         rf"|Бап\s+(?:{alts})\b"
@@ -106,6 +123,7 @@ def extract_covenant_block(
     """
     ids = tuple(covenant_ids) if covenant_ids is not None else COVENANT_IDS
     major = _article_major(ids)
+    text = _normalize_pdf_text(text)
     header_re = _clause_header_re(ids)
     article_re = _article_start_re(major)
     end_re = _article_end_re(major)
@@ -159,6 +177,7 @@ def split_covenant_clauses(
     if not block_text:
         return result
 
+    block_text = _normalize_pdf_text(block_text)
     ids = tuple(covenant_ids) if covenant_ids is not None else COVENANT_IDS
     id_set = set(ids)
     header_re = _clause_header_re(ids)
