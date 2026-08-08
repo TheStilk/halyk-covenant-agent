@@ -22,6 +22,8 @@ Rules:
 - Ratio A/B → numerator=[A], denominator=[B]. Absolute cap → numerator=[metric], denominator=[].
 - Individual overhead / max single line / max(payroll, utilities): use max_payroll_utilities
   (NOT sum of payroll+utilities in numerator).
+- If covenant specifies "fourth quarter" (четвертый квартал, төртінші тоқсан, Q4) revenue, use token `q4_revenue` (NOT just revenue).
+- If covenant restricts "payroll obligations" (обязательства по персоналу, қызметкерлер алдындағы міндеттемелер) potentially including severance, use token `payroll_total` (NOT just payroll).
 - raw_interpretation: one short sentence.
 """
 
@@ -33,7 +35,7 @@ TEXT:
 METRICS (context only, do not recalculate):
 {metrics_summary}
 
-TOKENS: revenue,opex,ebitda,adjusted_ebitda,capex,lease,interest,tax,utilities,insurance,payroll,marketing,related_party_payments,financing_inflows,group_capex,unrestricted_transfers,other_expense,max_payroll_tax,max_payroll_utilities,opex_plus_lease,lease_plus_utilities,tax_plus_utilities,revenue_plus_financing,opex_plus_capex
+TOKENS: revenue,opex,ebitda,adjusted_ebitda,capex,lease,interest,tax,utilities,insurance,payroll,marketing,related_party_payments,financing_inflows,group_capex,unrestricted_transfers,other_expense,max_payroll_tax,max_payroll_utilities,opex_plus_lease,lease_plus_utilities,tax_plus_utilities,revenue_plus_financing,opex_plus_capex,q4_revenue,payroll_total
 
 Return FormulaSpec only.
 """

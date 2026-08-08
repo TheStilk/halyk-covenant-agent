@@ -274,7 +274,7 @@ class FormulaResult:
 
 def detect_formula_id(covenant_text: str) -> str:
     t = covenant_text.lower()
-    if "капиталоёмкост" in t or "capital intensity" in t:
+    if "капиталоёмкост" in t or "capital intensity" in t or "күрделі сыйымдылық" in t:
         return "capital_intensity"  # capex / (opex + lease)
     if "покрытия процентов" in t or "interest coverage" in t or re.search(
         r"пайызды\s+жабу|пайыздық\s+жабын", t
@@ -282,21 +282,21 @@ def detect_formula_id(covenant_text: str) -> str:
         return "interest_coverage"  # ebitda / interest
     if re.search(r"капитальных\s+затрат\s+группы\s+к\s+ebitda|group.*capex.*ebitda|capex.*group.*ebitda", t):
         return "group_capex_to_ebitda"
-    if "скорректированной ebitda к выручке" in t or "adjusted ebitda" in t and "выручк" in t:
+    if "скорректированной ebitda к выручке" in t or "adjusted ebitda" in t and "выручк" in t or "түзетілген ebitda" in t:
         return "adj_ebitda_margin"
     if "рентабельность по ebitda" in t or ("ebitda" in t and "выручк" in t and "отношени" in t):
         return "ebitda_margin"
     if "related-party payments as a proportion" in t or (
         "связанн" in t and "от выручк" in t
     ) or ("аффилирован" in t and "0." in t and "выручк" in t) or (
-        "байланысты" in t and ("түсім" in t or "кіріс" in t)
+        ("байланысты" in t or "үлестес" in t) and ("түсім" in t or "кіріс" in t)
     ):
         return "rp_to_revenue"
     if "доля платежей связанным" in t and "операционн" in t:
         return "rp_to_opex"
-    if "налоговой и коммунальной" in t or ("налог" in t and "коммунальн" in t and "ebitda" in t):
+    if "налоговой и коммунальной" in t or ("налог" in t and "коммунальн" in t and "ebitda" in t) or ("салық" in t and "коммуналдық" in t):
         return "tax_util_to_ebitda"
-    if "страховое покрытие" in t or ("страховых премий" in t and "аренд" in t):
+    if "страховое покрытие" in t or ("страховых премий" in t and "аренд" in t) or "сақтандыру өтемі" in t:
         return "insurance_to_lease"
     if "выручка за вычетом наибольшей" in t:
         return "revenue_minus_max_overhead"
@@ -306,11 +306,11 @@ def detect_formula_id(covenant_text: str) -> str:
         return "sources_to_uses"
     if "поступлений по финансированию к ebitda" in t or "springing" in t or "drawdown leverage" in t:
         return "financing_to_ebitda"
-    if "выручка за четвёртый" in t or "четвёртый квартал" in t or "q4" in t:
+    if "выручка за четвёртый" in t or "четвёртый квартал" in t or "q4" in t or "төртінші тоқсандағы түсім" in t:
         return "q4_revenue"
-    if "обязательства по персоналу" in t or "совокупные обязательства по персоналу" in t:
+    if "обязательства по персоналу" in t or "совокупные обязательства по персоналу" in t or "қызметкерлер алдындағы міндеттемелер" in t:
         return "payroll_total"
-    if "переданных неограниченным дочерним" in t or "капитальных активов, переданных" in t:
+    if "переданных неограниченным дочерним" in t or "капитальных активов, переданных" in t or "шектелмеген еншілес" in t:
         return "assets_transferred"
     if "минимальная выручка" in t or "минимальн" in t and "выручк" in t:
         return "min_revenue"
@@ -884,16 +884,13 @@ def _is_q4_date(date_str: str | None) -> bool:
     return month in (10, 11, 12)
 
 
-def _compute_q4_revenue(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
+def get_q4_revenue(m: ScenarioMetrics) -> float:
     q4 = 0.0
-    txns = []
     for t in m.transactions:
         if t.category != "revenue" or t.amount <= 0 or t.excluded:
             continue
         if _is_q4_date(t.date):
             q4 += t.abs_amount
-            txns.append(t.txn_id)
-    # If no date-filtered revenue, fall back: any Q4 sales-like inflow
     if q4 == 0:
         for t in m.transactions:
             if t.amount <= 0 or t.excluded:
@@ -901,31 +898,25 @@ def _compute_q4_revenue(m: ScenarioMetrics, thr: float, direction: str) -> Formu
             if _is_q4_date(t.date):
                 if t.category == "revenue" or "sales" in t.description.lower():
                     q4 += t.abs_amount
-                    txns.append(t.txn_id)
-    # Fallback to full revenue if still empty (date missing)
     if q4 == 0 and m.revenue > 0:
         q4 = m.revenue
-        txns = m.revenue_txns
-    actual = _r2(q4)
+    return _r2(q4)
+
+def _compute_q4_revenue(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
+    actual = get_q4_revenue(m)
     status = _status(actual, thr, direction)
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
-        reasoning=f"Q4 revenue = {actual:.2f} txns={txns}; thr {direction} {thr:.2f}",
+        reasoning=f"Q4 revenue = {actual:.2f}; thr {direction} {thr:.2f}",
         confidence=0.7,
         formula_id="q4_revenue",
     )
 
 
-def _compute_payroll_total(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
-    """Payroll expenses + severance program obligations from notes.
-
-    Missing ledger payroll rows are already filled into m.payroll by metrics.
-    Severance program amounts are off-book disclosures (not separate ledger rows).
-    """
+def get_payroll_total(m: ScenarioMetrics) -> float:
     import re as _re
-
     severance = 0.0
     notes = m.notes_text or ""
     for pat in (
@@ -939,16 +930,17 @@ def _compute_payroll_total(m: ScenarioMetrics, thr: float, direction: str) -> Fo
         if mm:
             severance = _to_float(mm.group(1))
             break
+    return _r2(m.payroll + severance)
 
-    actual = _r2(m.payroll + severance)
+def _compute_payroll_total(m: ScenarioMetrics, thr: float, direction: str) -> FormulaResult:
+    actual = get_payroll_total(m)
     status = _status(actual, thr, direction)
     return FormulaResult(
         actual=actual,
         status=status,
         evidence_txn_id=None,
         reasoning=(
-            f"Payroll obligations = payroll {m.payroll:.2f} + severance {severance:.2f} "
-            f"= {actual:.2f}; thr {direction} {thr:.2f}"
+            f"Payroll obligations = {actual:.2f}; thr {direction} {thr:.2f}"
         ),
         confidence=0.9,
         formula_id="payroll_total",

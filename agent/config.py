@@ -41,6 +41,22 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse boolean env; empty / invalid → default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    s = str(raw).strip().lower()
+    if not s:
+        return bool(default)
+    if s in ("1", "true", "yes", "y", "t", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "f", "off"):
+        return False
+    print(f"[config] WARNING: invalid bool {name}={raw!r}, using {default}")
+    return bool(default)
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -124,22 +140,17 @@ GEMINI_MODEL = CLASSIFY_MODEL
 # ---------------------------------------------------------------------------
 CONFIDENCE_THRESHOLD = _env_float("CONFIDENCE_THRESHOLD", 0.85)
 MAX_BORROWER_CONCURRENCY = _env_int("MAX_BORROWER_CONCURRENCY", 6)
-CLASSIFY_USE_LLM = os.getenv("CLASSIFY_USE_LLM", "false").lower() in {"1", "true", "yes"}
-# LLM Formula Reader: interpret covenant text → formula_spec; code computes numbers.
-# Battle default: only run reader when det is unknown / low-confidence (not every cell).
-USE_LLM_FORMULA_READER = os.getenv("USE_LLM_FORMULA_READER", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-LLM_FORMULA_READER_ONLY_UNKNOWN = os.getenv(
-    "LLM_FORMULA_READER_ONLY_UNKNOWN", "true"
-).lower() in {"1", "true", "yes"}
-# On mismatch: prefer det when det is strong; prefer LLM-compute when det is unknown
-FORMULA_READER_PREFER_DET_ON_MISMATCH = os.getenv(
-    "FORMULA_READER_PREFER_DET_ON_MISMATCH", "true"
-).lower() in {"1", "true", "yes"}
-# Cap covenant text sent to reader (reduces Gemma length-limit blowups)
+CLASSIFY_USE_LLM = _env_bool("CLASSIFY_USE_LLM", False)
+
+# ---------------------------------------------------------------------------
+# Pipeline Behavior Controls
+# ---------------------------------------------------------------------------
+USE_LLM_FORMULA_READER = _env_bool("USE_LLM_FORMULA_READER", True)
+
+LLM_FORMULA_READER_ONLY_UNKNOWN = _env_bool("LLM_FORMULA_READER_ONLY_UNKNOWN", True)
+
+FORMULA_READER_PREFER_DET_ON_MISMATCH = _env_bool("FORMULA_READER_PREFER_DET_ON_MISMATCH", True)
+
 FORMULA_READER_MAX_TEXT_CHARS = _env_int("FORMULA_READER_MAX_TEXT_CHARS", 900)
 # FormulaSpec / short JSON — keep low to avoid long hallucination timeouts
 LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 1024)
