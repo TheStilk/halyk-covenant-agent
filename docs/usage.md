@@ -47,12 +47,12 @@ cp .env.example .env
 | `LLM_MODEL` | — | model id у провайдера |
 | `MODEL_LABEL` | =`LLM_MODEL` | submission.model (или `deterministic-formula-engine`) |
 | `USE_LLM_FORMULA_READER` | `true` | enable Formula Reader |
-| `LLM_FORMULA_READER_ONLY_UNKNOWN` | `true` | LLM **только** unknown/low-conf det |
+| `LLM_FORMULA_READER_ONLY_UNKNOWN` | `false` | LLM cross-checks **все** ячейки, не только unknown/low-conf det (ловит уверенный regex-мисклассификатор) |
 | `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | mismatch + known det → det |
-| `FORMULA_READER_MAX_TEXT_CHARS` | `900` | clip текста ковенанта в reader |
+| `FORMULA_READER_MAX_TEXT_CHARS` | `2500` | clip текста ковенанта в reader (клаузы до ~1400 символов не режутся) |
 | `MAX_TEXT_FILE_MB` | `16` | skip `.txt/.csv/...` larger than N MiB (OOM guard) |
 | `MAX_TABLE_PAGES` | `32` | pdfplumber `extract_tables` only first N pages |
-| `LLM_MAX_TOKENS` | `1024` | max completion tokens (JSON/FormulaSpec; floor 512) |
+| `LLM_MAX_TOKENS` | `4096` | max completion tokens (JSON/FormulaSpec + thinking; floor 512) |
 | `LLM_TIMEOUT_SEC` | `60` | HTTP timeout per LLM call |
 | `LLM_MAX_RETRIES` | `2` | retries (+ longer sleep on 429) |
 | `CLASSIFY_USE_LLM` | `false` | optional LLM classify |
@@ -60,7 +60,7 @@ cp .env.example .env
 | `CONFIDENCE_THRESHOLD` | `0.85` | low-conf boundary |
 | `TESSERACT_LANGS` | `eng+rus+kaz` | OCR languages (preflight) |
 
-**Смена провайдера/модели:** только env, без правок кода (OpenAI-compatible, в т.ч. Clodex и др.).
+**Смена провайдера/модели:** только env, без правок кода (любой OpenAI-compatible endpoint; боевая модель — DeepSeek V4 Flash через `https://api.deepseek.com/v1`, либо OpenRouter `deepseek/deepseek-v4-flash` как запасной вариант).
 
 ```bash
 export LLM_API_KEY=...

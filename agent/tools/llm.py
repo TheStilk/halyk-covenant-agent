@@ -11,6 +11,7 @@ No vendor-specific roles in business logic.
 
 from __future__ import annotations
 
+import json
 import time
 from functools import lru_cache
 from typing import Any, Optional, Type, TypeVar
@@ -60,7 +61,12 @@ def _make_chat(
         # Always attempt a timeout so hung TCP cannot freeze battle forever
         "timeout": timeout,
     }
-    if temperature > 0.0:
+    # Send temperature by default (determinism matters for a covenant reader;
+    # DeepSeek and most OpenAI-compatible endpoints accept it fine). Only
+    # skip it for a provider that 400s on non-default sampling params —
+    # opt out via LLM_SKIP_TEMPERATURE=1, not by silently dropping it
+    # whenever the caller happens to ask for temperature=0.0.
+    if not getattr(_cfg, "LLM_SKIP_TEMPERATURE", False):
         kwargs["temperature"] = temperature
     try:
         return ChatOpenAI(**kwargs, max_retries=retries)
@@ -155,6 +161,24 @@ def _retry_sleep(attempt: int, exc: BaseException) -> None:
     time.sleep(delay)
 
 
+def _parse_structured_json(schema: Type[T], content: str) -> T:
+    """Parse a schema instance out of raw LLM text (fenced or bare JSON)."""
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    text = text.strip()
+    # Some providers still wrap the object in prose despite instructions —
+    # take the outermost {...} span as a last resort.
+    if not text.startswith("{"):
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            text = text[start : end + 1]
+    data = json.loads(text)
+    return schema.model_validate(data)
+
+
 def structured_invoke(
     schema: Type[T],
     *,
@@ -163,7 +187,13 @@ def structured_invoke(
     temperature: float = 0.0,
     max_retries: Optional[int] = None,
 ) -> T:
-    """Invoke structured output with simple retry + rate-limit backoff."""
+    """Invoke structured output with simple retry + rate-limit backoff.
+
+    Falls back to a plain-text JSON call if `with_structured_output` fails on
+    every retry — some OpenAI-compatible proxies don't wire through
+    tool-calling/json_schema cleanly for every model, and that used to mean
+    the whole LLM path silently died for an otherwise-reachable provider.
+    """
     if not is_llm_available():
         raise RuntimeError(llm_status_message())
 
@@ -187,6 +217,20 @@ def structured_invoke(
                 _retry_sleep(attempt, exc)
                 continue
             break
+
+    try:
+        schema_hint = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        json_user = (
+            f"{user}\n\nRespond with ONLY a single JSON object matching this "
+            f"JSON Schema — no prose, no markdown code fences:\n{schema_hint}"
+        )
+        llm = get_chat_model(temperature=temperature)
+        raw = invoke_with_system(llm, system, json_user, use_cache_control=False)
+        content = raw.content if hasattr(raw, "content") else str(raw)
+        return _parse_structured_json(schema, content)
+    except Exception as exc2:  # noqa: BLE001
+        print(f"[llm] structured_invoke: raw-JSON fallback also failed: {exc2}")
+
     assert last_exc is not None
     raise last_exc
 

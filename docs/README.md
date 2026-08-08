@@ -27,7 +27,7 @@
 | Provider-agnostic LLM | ✅ только `LLM_*` env |
 | Formula Reader | ✅ LLM интерпретирует, code считает |
 | Det backup | ✅ primary без ключа; mismatch → det если known |
-| Battle policy | LLM **только** unknown/low-conf (`LLM_FORMULA_READER_ONLY_UNKNOWN=true`) |
+| Battle policy | LLM cross-check на **всех** ячейках (`LLM_FORMULA_READER_ONLY_UNKNOWN=false`); det остаётся приоритетным при mismatch на known-формулах |
 | Taxonomy `other_*` | ~0.6% (было ~28%) |
 
 ## Hardening (кратко)

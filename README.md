@@ -199,20 +199,20 @@ uv run python scripts/eval_phase2.py
 
 ## LLM (optional)
 
-Любой **OpenAI-compatible** endpoint (OpenAI, Qwen gateway, Clodex, …):
+Любой **OpenAI-compatible** endpoint. Боевая модель — DeepSeek V4 Flash:
 
 ```bash
 export LLM_API_KEY=...
-export LLM_BASE_URL=https://your-provider/v1
-export LLM_MODEL=provider/model-id
+export LLM_BASE_URL=https://api.deepseek.com/v1
+export LLM_MODEL=deepseek-v4-flash
 # MODEL_LABEL=...   # submission.model
 ```
 
 | Knob | Default |
 |------|---------|
-| `LLM_FORMULA_READER_ONLY_UNKNOWN` | `true` |
+| `LLM_FORMULA_READER_ONLY_UNKNOWN` | `false` (LLM cross-checks все ячейки, не только unknown/low-conf) |
 | `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` |
-| `LLM_MAX_TOKENS` | `1024` (floor 512) |
+| `LLM_MAX_TOKENS` | `4096` (floor 512) |
 | `CLASSIFY_USE_LLM` | `false` |
 
 Нет ключа / 429 / timeout → **det fallback**, пайплайн не обязан падать.  

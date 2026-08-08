@@ -117,7 +117,7 @@ Holdout open-set — **верхняя** граница для det (handlers ви
 6. never null cells; per-cell try/except
 ```
 
-Knobs: `LLM_FORMULA_READER_ONLY_UNKNOWN=true`, `FORMULA_READER_PREFER_DET_ON_MISMATCH=true`, `LLM_MAX_TOKENS=1024`.
+Knobs: `LLM_FORMULA_READER_ONLY_UNKNOWN=false` (LLM cross-checks every cell), `FORMULA_READER_PREFER_DET_ON_MISMATCH=true`, `LLM_MAX_TOKENS=4096`.
 
 ---
 

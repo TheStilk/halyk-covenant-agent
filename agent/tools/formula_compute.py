@@ -209,6 +209,10 @@ def compute_from_formula_spec(
         # status already set by _safe_ratio when thr present
         conf = float(spec.confidence)
         edge_s = f" | {edge_note}" if edge_note else ""
+        if edge_note:
+            # Band-rescue fired (see formula_engine._status_max_ratio): the
+            # 5%-overshoot COMPLIANT rule is unverified on private thresholds.
+            conf = min(conf, 0.55)
         reasoning = (
             f"[formula_spec:{spec.formula_kind}] {spec.raw_interpretation} | "
             f"num={spec.numerator_metrics}={num:.4f} den={spec.denominator_metrics}={den:.4f} "

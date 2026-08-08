@@ -210,10 +210,10 @@ Env (defaults battle-safe):
 | Knob | Default | Meaning |
 |------|---------|---------|
 | `USE_LLM_FORMULA_READER` | true | enable reader path |
-| `LLM_FORMULA_READER_ONLY_UNKNOWN` | true | only when det weak |
+| `LLM_FORMULA_READER_ONLY_UNKNOWN` | false | cross-check every cell, not only det-weak ones |
 | `FORMULA_READER_PREFER_DET_ON_MISMATCH` | true | prefer det if det known |
-| `FORMULA_READER_MAX_TEXT_CHARS` | 900 | head+tail clip covenant text |
-| `LLM_MAX_TOKENS` | 1024 | completion budget (floor 512) |
+| `FORMULA_READER_MAX_TEXT_CHARS` | 2500 | head+tail clip covenant text |
+| `LLM_MAX_TOKENS` | 4096 | completion budget (floor 512) |
 
 Модель **только** из env (`LLM_MODEL` / `MODEL_LABEL`).  
 Опциональный 2-й endpoint: `CLASSIFY_*` (classify only; default off).  

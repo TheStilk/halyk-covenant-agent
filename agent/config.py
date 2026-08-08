@@ -116,13 +116,31 @@ CLASSIFY_USE_LLM = _env_bool("CLASSIFY_USE_LLM", False)
 # ---------------------------------------------------------------------------
 USE_LLM_FORMULA_READER = _env_bool("USE_LLM_FORMULA_READER", True)
 
-LLM_FORMULA_READER_ONLY_UNKNOWN = _env_bool("LLM_FORMULA_READER_ONLY_UNKNOWN", True)
+# false = LLM Formula Reader runs on EVERY cell, not just unknown/low-conf ones.
+# Det stays authoritative on strong known-formula cells either way
+# (FORMULA_READER_PREFER_DET_ON_MISMATCH below), so this costs ~36 extra calls
+# per battle run and turns the LLM into a cross-checker that can catch a
+# regex false-positive (detect_formula_id confidently picking the wrong
+# formula_id) instead of only firing when det already admits it is unsure.
+# That regex-false-positive case is exactly what a closed formula_id catalog
+# cannot self-detect — see formula_mismatch_cells in diagnostics.
+LLM_FORMULA_READER_ONLY_UNKNOWN = _env_bool("LLM_FORMULA_READER_ONLY_UNKNOWN", False)
 
 FORMULA_READER_PREFER_DET_ON_MISMATCH = _env_bool("FORMULA_READER_PREFER_DET_ON_MISMATCH", True)
 
-FORMULA_READER_MAX_TEXT_CHARS = _env_int("FORMULA_READER_MAX_TEXT_CHARS", 900)
+# Covenant clauses run 600-1400 chars; the longest (payroll_total, min_revenue
+# with carve-out language) put the threshold in a subordinate clause near the
+# end. 900 truncated those. Raised with headroom; _clip_covenant_text keeps
+# head+tail so the raise mostly matters for the clauses it used to cut.
+FORMULA_READER_MAX_TEXT_CHARS = _env_int("FORMULA_READER_MAX_TEXT_CHARS", 2500)
 # FormulaSpec / JSON — allow enough tokens for thinking models (Sonnet 5) + response
 LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 4096)
+# Some OpenAI-compatible proxies reject non-default sampling params (notably
+# newer Anthropic models routed through a compat shim). Default is to send
+# temperature=0.0 as usual (correct/expected for DeepSeek and most
+# OpenAI-compatible endpoints — determinism matters for a covenant reader).
+# Flip to true only if the configured provider 400s on a temperature field.
+LLM_SKIP_TEMPERATURE = _env_bool("LLM_SKIP_TEMPERATURE", False)
 PDF_TEXT_PREVIEW_CHARS = 3000
 # Soft OOM guard for .txt/.csv/.md/.json extract (latin-1 can load whole file)
 MAX_TEXT_FILE_MB = _env_float("MAX_TEXT_FILE_MB", 16.0)
