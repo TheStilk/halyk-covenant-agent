@@ -87,26 +87,11 @@ CONTACT_EMAIL = os.getenv(
 #   LLM_MODEL=provider/model-id
 #   MODEL_LABEL=...   # optional; defaults to LLM_MODEL for submission.json
 #
-# Legacy aliases still accepted: OPENAI_API_KEY, QWEN_*, OPENAI_BASE_URL.
+# Also accepted: OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL (common aliases).
 # ---------------------------------------------------------------------------
-LLM_API_KEY = (
-    os.getenv("LLM_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
-    or os.getenv("QWEN_API_KEY")
-    or ""
-)
-LLM_BASE_URL = (
-    os.getenv("LLM_BASE_URL")
-    or os.getenv("OPENAI_BASE_URL")
-    or os.getenv("QWEN_BASE_URL")
-    or ""
-)
-LLM_MODEL = (
-    os.getenv("LLM_MODEL")
-    or os.getenv("OPENAI_MODEL")
-    or os.getenv("QWEN_MODEL")
-    or ""
-)
+LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+LLM_BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
+LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or ""
 LLM_TIMEOUT_SEC = _env_float("LLM_TIMEOUT_SEC", 60.0)
 LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 2)
 
@@ -118,11 +103,6 @@ MODEL_LABEL = (os.getenv("MODEL_LABEL") or LLM_MODEL or "deterministic-formula-e
 CLASSIFY_API_KEY = os.getenv("CLASSIFY_API_KEY") or ""
 CLASSIFY_BASE_URL = os.getenv("CLASSIFY_BASE_URL") or LLM_BASE_URL
 CLASSIFY_MODEL = os.getenv("CLASSIFY_MODEL") or LLM_MODEL
-
-# Legacy aliases (same objects) so old imports do not break
-QWEN_API_KEY = LLM_API_KEY
-QWEN_BASE_URL = LLM_BASE_URL
-QWEN_MODEL = LLM_MODEL
 
 # ---------------------------------------------------------------------------
 # Runtime knobs
