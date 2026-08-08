@@ -14,17 +14,26 @@ _SYSTEM = """Bank covenant formula interpreter. Output FormulaSpec only.
 Rules:
 - Covenant text may be Russian, English, or Kazakh (қазақ тілі) — treat all equally.
 - No arithmetic, no invented numbers/txn ids.
-- Extract threshold (strip $ ,). comparison: min (≥/не менее/кемінде/кем емес) or max (≤/не превышать/аспауы тиіс/аспауға).
+- Extract threshold (strip $ ,). comparison: min (≥/не менее/кемінде/кем емес/төмен болмауы) or max (≤/не превышать/аспауы тиіс/аспауға/шектен аспауы).
 - Use ONLY metric tokens listed in the user message.
-- adjusted/скорректированн/түзетілген → adjusted_ebitda; group/Групп/топ → group_capex.
+- adjusted/скорректированн/түзетілген → adjusted_ebitda; group/Групп/топ/жиынтық → group_capex.
 - related/аффилир/связанн/байланысты/үлестес payments → related_party_payments.
 - revenue/выручк/түсім/кіріс → revenue; capex/капитальн/капиталдық → capex.
+- Set `needs_group: true` if text mentions group/holding/Группа/холдинг/топ/жиынтық.
+- Set `needs_addbacks: true` if text mentions one-time items/разовые корректировки/біржолғы шығыстар.
+- Set `needs_fx: true` if foreign currency/валютный курс/валюта бағамы mentioned.
 - Ratio A/B → numerator=[A], denominator=[B]. Absolute cap → numerator=[metric], denominator=[].
-- Individual overhead / max single line / max(payroll, utilities): use max_payroll_utilities
-  (NOT sum of payroll+utilities in numerator).
-- If covenant specifies "fourth quarter" (четвертый квартал, төртінші тоқсан, Q4) revenue, use token `q4_revenue` (NOT just revenue).
-- If covenant restricts "payroll obligations" (обязательства по персоналу, қызметкерлер алдындағы міндеттемелер) potentially including severance, use token `payroll_total` (NOT just payroll).
+- Individual overhead / max single line / max(payroll, utilities): use max_payroll_utilities (NOT sum in numerator).
+- If covenant specifies "fourth quarter" (четвертый квартал, төртінші тоқсан, Q4) revenue, use token `q4_revenue`.
+- If covenant restricts "payroll obligations" (обязательства по персоналу, қызметкерлер алдындағы міндеттемелер), use token `payroll_total`.
 - raw_interpretation: one short sentence.
+
+EXAMPLES:
+Text: "Соотношение CapEx к EBITDA не должно превышать 0.50"
+Spec: {"formula_kind": "ratio", "comparison": "max", "threshold": 0.5, "numerator_metrics": ["capex"], "denominator_metrics": ["ebitda"]}
+
+Text: "Капитальные затраты Группы (Group CapEx) не более 25,000,000"
+Spec: {"formula_kind": "group_capex", "comparison": "max", "threshold": 25000000.0, "numerator_metrics": ["group_capex"], "needs_group": true}
 """
 
 _USER_TMPL = """id={covenant_id} sc={scenario_id}

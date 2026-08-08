@@ -164,10 +164,12 @@ def structured_invoke(
     max_retries: Optional[int] = None,
 ) -> T:
     """Invoke structured output with simple retry + rate-limit backoff."""
+    import json
+    import re
+    from langchain_core.messages import HumanMessage, SystemMessage
+
     if not is_llm_available():
         raise RuntimeError(llm_status_message())
-
-    from langchain_core.messages import HumanMessage, SystemMessage
 
     retries = _cfg.LLM_MAX_RETRIES if max_retries is None else max_retries
     last_exc: Optional[BaseException] = None
@@ -182,6 +184,22 @@ def structured_invoke(
                 return result
             return schema.model_validate(result)
         except Exception as exc:  # noqa: BLE001
+            # Fallback: raw text invocation + markdown/text JSON extraction
+            try:
+                raw_text = invoke_json_text(system=system, user=user, temperature=temperature)
+                json_str = raw_text.strip()
+                if "```" in json_str:
+                    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", json_str, re.DOTALL)
+                    if match:
+                        json_str = match.group(1)
+                if not json_str.startswith("{"):
+                    match = re.search(r"(\{.*\})", json_str, re.DOTALL)
+                    if match:
+                        json_str = match.group(1)
+                data = json.loads(json_str)
+                return schema.model_validate(data)
+            except Exception:  # noqa: BLE001
+                pass
             last_exc = exc
             if attempt < retries:
                 _retry_sleep(attempt, exc)
