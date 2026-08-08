@@ -40,7 +40,6 @@ def _apply_key(key: str) -> None:
     import agent.tools.llm as llm_mod
 
     cfg.LLM_API_KEY = key
-    cfg.QWEN_API_KEY = key
     if hasattr(llm_mod.get_chat_model, "cache_clear"):
         llm_mod.get_chat_model.cache_clear()
     if hasattr(llm_mod.get_classify_model, "cache_clear"):

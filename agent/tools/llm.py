@@ -102,11 +102,6 @@ def get_llm(temperature: float = 0.0) -> Any:
     return get_chat_model(temperature=temperature)
 
 
-# Backward-compatible name — same as get_llm
-def get_qwen(temperature: float = 0.0) -> Any:
-    return get_chat_model(temperature=temperature)
-
-
 def is_classify_llm_available() -> bool:
     """Classify LLM: dedicated CLASSIFY_* or fallback to primary LLM_*."""
     if _cfg.CLASSIFY_API_KEY and _cfg.CLASSIFY_BASE_URL and _cfg.CLASSIFY_MODEL:
@@ -137,15 +132,6 @@ def llm_structured(
 ) -> Any:
     llm = get_chat_model(temperature=temperature)
     return llm.with_structured_output(schema)
-
-
-def qwen_structured(
-    schema: Type[BaseModel],
-    *,
-    temperature: float = 0.0,
-) -> Any:
-    """Deprecated alias → llm_structured."""
-    return llm_structured(schema, temperature=temperature)
 
 
 def _is_rate_limit_error(exc: BaseException) -> bool:
