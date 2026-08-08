@@ -216,8 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def preflight_check() -> list[str]:
-    """Verify runtime deps before pipeline runs. Returns list of errors (empty = OK)."""
+def preflight_check() -> tuple[list[str], list[str]]:
+    """Verify runtime deps before pipeline runs. Returns (errors, warnings)."""
+    import os
     import shutil
     import subprocess as _sp
 
@@ -230,12 +231,15 @@ def preflight_check() -> list[str]:
     )
 
     errors: list[str] = []
+    warnings: list[str] = []
+    allow_no_ocr = os.getenv("ALLOW_NO_OCR", "").strip().lower() in {"1", "true", "yes"}
 
     # OCR toolchain (eng+rus+kaz required for battle / KZ docs)
+    ocr_errs: list[str] = []
     if not shutil.which("pdftoppm"):
-        errors.append("pdftoppm not found (install poppler-utils)")
+        ocr_errs.append("pdftoppm not found (install poppler-utils)")
     if not shutil.which("tesseract"):
-        errors.append("tesseract not found (install tesseract-ocr)")
+        ocr_errs.append("tesseract not found (install tesseract-ocr)")
     else:
         try:
             proc = _sp.run(
@@ -245,24 +249,28 @@ def preflight_check() -> list[str]:
                 timeout=10,
                 check=False,
             )
-            # tesseract prints langs one per line (sometimes on stderr)
             installed = {
                 line.strip()
                 for line in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines()
                 if line.strip() and " " not in line.strip() and line.strip().islower()
             }
-            # Fallback: any token match if filtering was too strict
             raw = (proc.stdout or "") + "\n" + (proc.stderr or "")
             for lang in TESSERACT_LANGS:
                 if lang not in installed and lang not in raw.split():
-                    errors.append(
+                    ocr_errs.append(
                         f"tesseract language '{lang}' not installed "
                         f"(need eng+rus+kaz; e.g. tesseract-ocr-kaz)"
                     )
         except Exception as exc:
-            errors.append(f"tesseract --list-langs failed: {exc}")
+            ocr_errs.append(f"tesseract --list-langs failed: {exc}")
 
-    # Data files
+    if ocr_errs:
+        if allow_no_ocr:
+            warnings.extend(ocr_errs)
+        else:
+            errors.extend(ocr_errs)
+
+    # Data files (critical - always errors)
     if not DATA_DIR.exists():
         errors.append(f"DATA_DIR not found: {DATA_DIR}")
     if not LEDGER_PATH.exists():
@@ -272,7 +280,7 @@ def preflight_check() -> list[str]:
     if not DOCUMENTS_DIR.exists():
         errors.append(f"Documents dir not found: {DOCUMENTS_DIR}")
 
-    return errors
+    return errors, warnings
 
 
 def main() -> int:
@@ -280,12 +288,16 @@ def main() -> int:
     args = parser.parse_args()
     # Preflight for pipeline commands (not classify/validate/map)
     if args.command in ("foundation", "phase2", "phase3"):
-        errors = preflight_check()
+        errors, warnings = preflight_check()
+        if warnings:
+            print("=== PREFLIGHT WARNINGS ===")
+            for w in warnings:
+                print(f"  ⚠️ {w}")
         if errors:
             print("=== PREFLIGHT FAILED ===")
             for e in errors:
                 print(f"  ✗ {e}")
-            print("Fix the above before running the pipeline.")
+            print("Fix the above before running the pipeline (or set ALLOW_NO_OCR=1 to bypass OCR checks).")
             return 1
         print("=== PREFLIGHT OK ===")
     return args.func(args)

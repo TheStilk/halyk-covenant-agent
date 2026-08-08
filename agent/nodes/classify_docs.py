@@ -119,6 +119,19 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
                 classification.doc_type.value
             ].append(str(pdf_path))
 
+    # Pass 2: Bind unassigned documents by company_name derived from documents that have both
+    company_map = bind_companies_from_index(doc_index)
+    if company_map:
+        for entry in doc_index:
+            if not entry.get("scenario_id") and entry.get("company_name"):
+                sc_id = company_map.get(entry["company_name"].lower())
+                if sc_id:
+                    entry["scenario_id"] = sc_id
+                    pdf_path = entry["path"]
+                    dt = entry["doc_type"]
+                    if dt != DocType.JUNK and pdf_path not in docs_by_scenario[sc_id][dt]:
+                        docs_by_scenario[sc_id][dt].append(pdf_path)
+
     # Materialize nested defaultdicts
     docs_by_scenario_plain = {
         sc: {dt: paths for dt, paths in types.items()}

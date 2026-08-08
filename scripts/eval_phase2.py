@@ -223,6 +223,14 @@ def run_eval(scenario_ids: list[str] | None = None, *, use_llm: bool = False) ->
             f"= {100 * sum(scores) / len(scores):5.1f}%{label}"
         )
 
+    by_cov: dict[str, list[float]] = {}
+    for r in rows:
+        by_cov.setdefault(r["covenant"], []).append(r["score"]["total"])
+    print("\n=== BY COVENANT TYPE (6.1 / 6.2 / 6.3) ===")
+    for cid in sorted(by_cov):
+        scs = by_cov[cid]
+        print(f"  {cid:8s} {sum(scs):6.3f} / {len(scs):3d} = {100 * sum(scs) / len(scs):5.1f}%")
+
     # Worst cells (lowest score first)
     worst = sorted(rows, key=lambda r: r["score"]["total"])
     print("\n=== WORST CELLS ===")
