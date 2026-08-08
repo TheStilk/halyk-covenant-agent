@@ -115,25 +115,14 @@ MODEL_LABEL = (os.getenv("MODEL_LABEL") or LLM_MODEL or "deterministic-formula-e
 
 # Optional second OpenAI-compatible endpoint for PDF classify only.
 # If unset, CLASSIFY_USE_LLM reuses the primary LLM_* client.
-CLASSIFY_API_KEY = (
-    os.getenv("CLASSIFY_API_KEY")
-    or os.getenv("GOOGLE_API_KEY")
-    or os.getenv("GEMINI_API_KEY")
-    or ""
-)
+CLASSIFY_API_KEY = os.getenv("CLASSIFY_API_KEY") or ""
 CLASSIFY_BASE_URL = os.getenv("CLASSIFY_BASE_URL") or LLM_BASE_URL
-CLASSIFY_MODEL = (
-    os.getenv("CLASSIFY_MODEL")
-    or os.getenv("GEMINI_MODEL")
-    or LLM_MODEL
-)
+CLASSIFY_MODEL = os.getenv("CLASSIFY_MODEL") or LLM_MODEL
 
 # Legacy aliases (same objects) so old imports do not break
 QWEN_API_KEY = LLM_API_KEY
 QWEN_BASE_URL = LLM_BASE_URL
 QWEN_MODEL = LLM_MODEL
-GOOGLE_API_KEY = CLASSIFY_API_KEY
-GEMINI_MODEL = CLASSIFY_MODEL
 
 # ---------------------------------------------------------------------------
 # Runtime knobs
