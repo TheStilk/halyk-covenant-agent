@@ -200,10 +200,3 @@ rm -rf doc_cache   # new dataset / extract changes
 | NaN amount | notes/treasury; battle missing amounts |
 | LLM length / 500 | shorter text clip; det backup |
 | mismatch LLM vs det | expected on some overhead formulas; det wins if known |
-
----
-
-## Архив LLM-smoke
-
-Исторические отчёты (без ключей):  
-`archive/gemini-llm-probe-20260806/` — P1/P4 + hard P3/P5/P7/B1.
