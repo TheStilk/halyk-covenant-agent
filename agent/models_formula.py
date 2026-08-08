@@ -33,7 +33,7 @@ class FormulaSpec(BaseModel):
             "payroll, marketing, related_party_payments, financing_inflows, "
             "group_capex, unrestricted_transfers, other_expense, max_payroll_tax, "
             "max_payroll_utilities, opex_plus_lease, lease_plus_utilities, "
-            "tax_plus_utilities, revenue_plus_financing, opex_plus_capex"
+            "tax_plus_utilities, revenue_plus_financing, opex_plus_capex, q4_revenue, payroll_total"
         ),
     )
     denominator_metrics: list[str] = Field(

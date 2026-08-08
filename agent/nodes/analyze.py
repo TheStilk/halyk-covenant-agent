@@ -307,7 +307,8 @@ def analyze_one_covenant(
             # 5) mismatch policy
             print(
                 f"[analyze] formula_reader mismatch {scenario_id}/{covenant_id}: "
-                f"llm={computed.status}/{computed.actual} det={det.status}/{det.actual}"
+                f"llm={computed.status}/{computed.actual} det={det.status}/{det.actual} | "
+                f"llm_reason={(computed.reasoning or '')[:160]}"
             )
             prefer_det = FORMULA_READER_PREFER_DET_ON_MISMATCH and not unknown
             if prefer_det:
@@ -315,6 +316,7 @@ def analyze_one_covenant(
                 chosen.confidence = min(det.confidence, 0.55)
                 chosen.reasoning = (
                     f"[mismatch → det] LLM={computed.status}/{computed.actual} | "
+                    f"LLM: {(computed.reasoning or '')[:200]} | "
                     f"{det.reasoning} | spec={spec.model_dump()}"
                 )
                 return chosen

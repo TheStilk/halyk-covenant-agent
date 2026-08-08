@@ -30,6 +30,7 @@ _METRIC_ALIASES: dict[str, str] = {
 
 
 def _metric_map(m: ScenarioMetrics) -> dict[str, float]:
+    from agent.tools.formula_engine import get_q4_revenue, get_payroll_total
     unrestr = float(m.raw_aggregates.get("unrestricted_transfer", 0.0) or 0.0)
     return {
         "revenue": m.revenue,
@@ -56,6 +57,8 @@ def _metric_map(m: ScenarioMetrics) -> dict[str, float]:
         "tax_plus_utilities": m.tax + m.utilities,
         "revenue_plus_financing": m.revenue + m.financing_inflows,
         "opex_plus_capex": m.opex + m.capex,
+        "q4_revenue": get_q4_revenue(m),
+        "payroll_total": get_payroll_total(m),
     }
 
 
