@@ -130,11 +130,6 @@ def get_classify_model(temperature: float = 0.0) -> Any:
     return get_chat_model(temperature=temperature)
 
 
-def get_gemini(temperature: float = 0.0) -> Any:
-    """Deprecated alias → get_classify_model (OpenAI-compatible only)."""
-    return get_classify_model(temperature=temperature)
-
-
 def llm_structured(
     schema: Type[BaseModel],
     *,
