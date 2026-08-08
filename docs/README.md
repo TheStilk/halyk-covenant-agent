@@ -8,8 +8,6 @@
 | [data-and-scoring.md](data-and-scoring.md) | Датасет, taxonomy, scoring |
 | [BATTLE_RUNBOOK.md](BATTLE_RUNBOOK.md) | OCR-check + private day order |
 
-Исторические LLM-smoke отчёты (без ключей): [../archive/gemini-llm-probe-20260806/](../archive/gemini-llm-probe-20260806/).
-
 ## Карта для новых участников
 
 1. `uv sync` → `uv run python scripts/smoke_phase1.py`  
