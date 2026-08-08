@@ -121,8 +121,8 @@ LLM_FORMULA_READER_ONLY_UNKNOWN = _env_bool("LLM_FORMULA_READER_ONLY_UNKNOWN", T
 FORMULA_READER_PREFER_DET_ON_MISMATCH = _env_bool("FORMULA_READER_PREFER_DET_ON_MISMATCH", True)
 
 FORMULA_READER_MAX_TEXT_CHARS = _env_int("FORMULA_READER_MAX_TEXT_CHARS", 900)
-# FormulaSpec / short JSON — keep low to avoid long hallucination timeouts
-LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 1024)
+# FormulaSpec / JSON — allow enough tokens for thinking models (Sonnet 5) + response
+LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 4096)
 PDF_TEXT_PREVIEW_CHARS = 3000
 # Soft OOM guard for .txt/.csv/.md/.json extract (latin-1 can load whole file)
 MAX_TEXT_FILE_MB = _env_float("MAX_TEXT_FILE_MB", 16.0)

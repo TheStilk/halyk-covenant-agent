@@ -1469,9 +1469,9 @@ def extract_scenario_metrics(
 
 def _iter_docs_mentioning_account(account_id: str):
     """Yield (path, text) for PDFs that mention this account (treasury memos etc.)."""
-    from pathlib import Path
+    from agent.config import DOCUMENTS_DIR
 
-    root = Path(__file__).resolve().parents[2] / "agentic-bank-public" / "documents"
+    root = DOCUMENTS_DIR
     if not root.exists() or not account_id:
         return
     needle = account_id.replace("ACC-", "")
@@ -1486,9 +1486,9 @@ def _iter_docs_mentioning_account(account_id: str):
 
 def _find_group_capex_for_company(company_name: str, scenario_id: str) -> Optional[float]:
     """Scan documents/ for consolidated PPE rollforward mentioning this borrower."""
-    from pathlib import Path
+    from agent.config import DOCUMENTS_DIR
 
-    root = Path(__file__).resolve().parents[2] / "agentic-bank-public" / "documents"
+    root = DOCUMENTS_DIR
     if not root.exists():
         return None
     # Normalize whitespace so line-broken names still match

@@ -282,70 +282,75 @@ def detect_formula_id(covenant_text: str) -> str:
         return "interest_coverage"  # ebitda / interest
     if re.search(r"капитальных\s+затрат\s+группы\s+к\s+ebitda|group.*capex.*ebitda|capex.*group.*ebitda", t):
         return "group_capex_to_ebitda"
-    if "скорректированной ebitda к выручке" in t or "adjusted ebitda" in t and "выручк" in t or "түзетілген ebitda" in t:
+    if "скорректированной ebitda к выручке" in t or ("adjusted ebitda" in t and ("выручк" in t or "revenue" in t)) or "түзетілген ebitda" in t:
         return "adj_ebitda_margin"
-    if "рентабельность по ebitda" in t or ("ebitda" in t and "выручк" in t and "отношени" in t):
+    if "рентабельность по ebitda" in t or "ebitda margin" in t or ("ebitda" in t and ("выручк" in t or "revenue" in t) and "отношени" in t):
         return "ebitda_margin"
-    if "related-party payments as a proportion" in t or (
+    if "related-party payments as a proportion" in t or "related party payments to revenue" in t or (
         "связанн" in t and "от выручк" in t
     ) or ("аффилирован" in t and "0." in t and "выручк" in t) or (
         ("байланысты" in t or "үлестес" in t) and ("түсім" in t or "кіріс" in t)
     ):
         return "rp_to_revenue"
-    if "доля платежей связанным" in t and "операционн" in t:
+    if "доля платежей связанным" in t and "операционн" in t or "related party to opex" in t:
         return "rp_to_opex"
-    if "налоговой и коммунальной" in t or ("налог" in t and "коммунальн" in t and "ebitda" in t) or ("салық" in t and "коммуналдық" in t):
+    if "налоговой и коммунальной" in t or ("налог" in t and "коммунальн" in t and "ebitda" in t) or ("салық" in t and "коммуналдық" in t) or ("tax" in t and "util" in t and "ebitda" in t):
         return "tax_util_to_ebitda"
-    if "страховое покрытие" in t or ("страховых премий" in t and "аренд" in t) or "сақтандыру өтемі" in t:
+    if "страховое покрытие" in t or ("страховых премий" in t and "аренд" in t) or "сақтандыру өтемі" in t or "insurance coverage" in t or ("insurance" in t and "lease" in t):
         return "insurance_to_lease"
-    if "выручка за вычетом наибольшей" in t:
+    if "выручка за вычетом наибольшей" in t or "revenue less the higher" in t or "revenue minus max overhead" in t or "revenue less maximum" in t:
         return "revenue_minus_max_overhead"
-    if "покрытие расходов на персонал" in t or ("персонал" in t and "коммунальн" in t and "выручк" in t):
+    if "покрытие расходов на персонал" in t or ("персонал" in t and "коммунальн" in t and "выручк" in t) or "coverage of payroll" in t:
         return "revenue_to_payroll_util"
-    if "cover of applications" in t or ("выручки и поступлений по финансированию" in t):
+    if "cover of applications" in t or ("выручки и поступлений по финансированию" in t) or "sources and uses" in t or "sources to uses" in t:
         return "sources_to_uses"
-    if "поступлений по финансированию к ebitda" in t or "springing" in t or "drawdown leverage" in t:
+    if "поступлений по финансированию к ebitda" in t or "springing" in t or "drawdown leverage" in t or "financing to ebitda" in t:
         return "financing_to_ebitda"
-    if "выручка за четвёртый" in t or "четвёртый квартал" in t or "q4" in t or "төртінші тоқсандағы түсім" in t:
+    if "выручка за четвёртый" in t or "четвёртый квартал" in t or "q4" in t or "төртінші тоқсандағы түсім" in t or "fourth quarter" in t:
         return "q4_revenue"
-    if "обязательства по персоналу" in t or "совокупные обязательства по персоналу" in t or "қызметкерлер алдындағы міндеттемелер" in t:
+    if "обязательства по персоналу" in t or "совокупные обязательства по персоналу" in t or "қызметкерлер алдындағы міндеттемелер" in t or "payroll obligation" in t or "total payroll" in t or "personnel obligation" in t:
         return "payroll_total"
-    if "переданных неограниченным дочерним" in t or "капитальных активов, переданных" in t or "шектелмеген еншілес" in t:
+    if "переданных неограниченным дочерним" in t or "капитальных активов, переданных" in t or "шектелмеген еншілес" in t or "unrestricted subsidiar" in t or "transferred to unrestricted" in t:
         return "assets_transferred"
-    if "минимальная выручка" in t or "минимальн" in t and "выручк" in t:
+    if "минимальная выручка" in t or ("минимальн" in t and "выручк" in t) or "minimum revenue" in t or "minimum category revenue" in t or "min revenue" in t:
         return "min_revenue"
     if "максимальные расходы по категории" in t or (
         "капитальные затраты" in t and "не превыша" in t
-    ):
+    ) or "maximum category expenditure" in t or "maximum capital expenditure" in t or "max capex" in t or "maximum capex" in t:
         return "max_capex"
-    if "individual overhead" in t or "отдельная статья накладных" in t:
+    if "individual overhead" in t or "отдельная статья накладных" in t or "maximum single overhead" in t or "maximum overhead line" in t:
         return "max_single_overhead"
     if (
         "связанн" in t
         or "аффилирован" in t
         or "related-party" in t
         or "related party" in t
+        or "restricted payment" in t
+        or "affiliate" in t
         or "байланысты тарап" in t
         or "байланысты тұлға" in t
     ):
         # absolute RP cap (not ratio)
         if (
-            re.search(r"\$\s*[0-9]", t)
+            (re.search(r"\$\s*[0-9]", t) or "exceed" in t or "maximum" in t)
             and "выручк" not in t
             and "түсім" not in t
             and "proportion" not in t
+            and "ratio" not in t
         ):
             return "max_related_party"
         return "rp_to_revenue"
-    if ("выручк" in t or "түсім" in t or "кіріс" in t) and (
+    if ("выручк" in t or "түсім" in t or "кіріс" in t or "revenue" in t) and (
         "не менее" in t
         or "минимальн" in t
         or "кемінде" in t
         or "кем емес" in t
         or "төмендемеу" in t
+        or "minimum" in t
+        or "at least" in t
     ):
         return "min_revenue"
-    if "капитальн" in t or "капиталдық" in t:
+    if "капитальн" in t or "капиталдық" in t or "capital expenditure" in t or "capex" in t:
         return "max_capex"
     return "unknown"
 
