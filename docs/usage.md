@@ -60,7 +60,7 @@ cp .env.example .env
 | `CONFIDENCE_THRESHOLD` | `0.85` | low-conf boundary |
 | `TESSERACT_LANGS` | `eng+rus+kaz` | OCR languages (preflight) |
 
-**Смена провайдера/модели:** только env, без правок кода (любой OpenAI-compatible endpoint; боевая модель — DeepSeek V4 Flash через `https://api.deepseek.com/v1`, либо OpenRouter `deepseek/deepseek-v4-flash` как запасной вариант).
+**Смена провайдера/модели:** только env, без правок кода (любой OpenAI-compatible endpoint; боевая модель — Gemini 3.6 Flash через `https://generativelanguage.googleapis.com/v1beta/openai/`, либо OpenRouter `google/gemini-3.6-flash` как запасной вариант).
 
 ```bash
 export LLM_API_KEY=...

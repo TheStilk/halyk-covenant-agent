@@ -62,7 +62,7 @@ def _make_chat(
         "timeout": timeout,
     }
     # Send temperature by default (determinism matters for a covenant reader;
-    # DeepSeek and most OpenAI-compatible endpoints accept it fine). Only
+    # Gemini and most OpenAI-compatible endpoints accept it fine). Only
     # skip it for a provider that 400s on non-default sampling params —
     # opt out via LLM_SKIP_TEMPERATURE=1, not by silently dropping it
     # whenever the caller happens to ask for temperature=0.0.

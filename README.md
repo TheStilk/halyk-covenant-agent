@@ -199,12 +199,12 @@ uv run python scripts/eval_phase2.py
 
 ## LLM (optional)
 
-Любой **OpenAI-compatible** endpoint. Боевая модель — DeepSeek V4 Flash:
+Любой **OpenAI-compatible** endpoint. Боевая модель — Gemini 3.6 Flash:
 
 ```bash
 export LLM_API_KEY=...
-export LLM_BASE_URL=https://api.deepseek.com/v1
-export LLM_MODEL=deepseek-v4-flash
+export LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+export LLM_MODEL=gemini-3.6-flash
 # MODEL_LABEL=...   # submission.model
 ```
 

@@ -133,11 +133,12 @@ FORMULA_READER_PREFER_DET_ON_MISMATCH = _env_bool("FORMULA_READER_PREFER_DET_ON_
 # end. 900 truncated those. Raised with headroom; _clip_covenant_text keeps
 # head+tail so the raise mostly matters for the clauses it used to cut.
 FORMULA_READER_MAX_TEXT_CHARS = _env_int("FORMULA_READER_MAX_TEXT_CHARS", 2500)
-# FormulaSpec / JSON — allow enough tokens for thinking models (Sonnet 5) + response
+# FormulaSpec / JSON — headroom for reasoning + response on whichever model
+# is configured (some providers count "thinking" tokens against this cap)
 LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 4096)
 # Some OpenAI-compatible proxies reject non-default sampling params (notably
 # newer Anthropic models routed through a compat shim). Default is to send
-# temperature=0.0 as usual (correct/expected for DeepSeek and most
+# temperature=0.0 as usual (correct/expected for Gemini and most
 # OpenAI-compatible endpoints — determinism matters for a covenant reader).
 # Flip to true only if the configured provider 400s on a temperature field.
 LLM_SKIP_TEMPERATURE = _env_bool("LLM_SKIP_TEMPERATURE", False)
