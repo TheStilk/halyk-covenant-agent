@@ -495,19 +495,19 @@ def _extract_pdftotext(path: Path) -> dict[str, Any]:
 # Helpers used by classifiers / extractors
 # ---------------------------------------------------------------------------
 
-# ACC- / АСС- with 3–6 digits (not hard-limited to ACC-7xxx / 4 digits only)
+# ACC- / TELE- / АСС- / ТЕЛЕ- with 3–6 digits
 _ACCOUNT_RE = re.compile(
-    r"\b(?:ACC|АСС)[-\s]?(\d{3,6})\b",
+    r"\b(?:ACC|TELE|АСС|ТЕЛЕ)[-\s]?(\d{3,6})\b",
     re.IGNORECASE,
 )
 _ACCOUNT_SPACED_RE = re.compile(
-    r"(?:A\s*C\s*C|А\s*С\s*С)\s*[-–—]?\s*((?:\d\s*){3,6})",
+    r"(?:A\s*C\s*C|T\s*E\s*L\s*E|А\s*С\s*С|Т\s*Е\s*Л\s*Е)\s*[-–—]?\s*((?:\d\s*){3,6})",
     re.IGNORECASE,
 )
-# Optional: "Account ID: 7801" / "счёт № 7801" near ACC context
+# Optional: "Account ID: 7801" / "счёт № 7801" near ACC/TELE context
 _ACCOUNT_LOOSE_RE = re.compile(
     r"(?:account\s*(?:id|no\.?|number)?|сч[её]т(?:\s*№)?|номер\s*сч[её]та)"
-    r"\s*[:#]?\s*(?:ACC[-\s]?)?(\d{3,6})\b",
+    r"\s*[:#]?\s*(?:(?:ACC|TELE)[-\s]?)?(\d{3,6})\b",
     re.IGNORECASE,
 )
 
@@ -524,18 +524,19 @@ _COMPANY_RE = re.compile(
 
 
 def normalize_account_id(raw_digits_or_acc: str) -> str:
-    """Normalize to ACC-XXXX form."""
-    s = str(raw_digits_or_acc).strip().upper().replace("АСС", "ACC")
+    """Normalize to ACC-XXXX or TELE-XXXX form."""
+    s = str(raw_digits_or_acc).strip().upper().replace("АСС", "ACC").replace("ТЕЛЕ", "TELE")
     s = re.sub(r"\s+", "", s)
-    m = re.search(r"(?:ACC-?)?(\d{3,6})", s)
+    m = re.search(r"(?:(ACC|TELE)-?)?(\d{3,6})", s)
     if not m:
-        return s if s.startswith("ACC-") else f"ACC-{s}"
-    return f"ACC-{m.group(1)}"
+        return s
+    prefix = m.group(1) or "ACC"
+    return f"{prefix}-{m.group(2)}"
 
 
 def is_noise_account_id(account_id: str) -> bool:
     """Heuristic: open-set noise accounts are ACC-9xxx; not limited to ACC-7 borrowers."""
-    m = re.match(r"ACC-(\d+)$", str(account_id).upper())
+    m = re.match(r"(?:ACC|TELE)-(\d+)$", str(account_id).upper())
     if not m:
         return False
     return m.group(1).startswith("9")
@@ -558,27 +559,28 @@ def prefer_borrower_account(
 
 
 def find_account_ids(text: str) -> list[str]:
-    """Extract ACC-XXXX identifiers (3–6 digits; spaced/Cyrillic АСС forms)."""
+    """Extract ACC-XXXX / TELE-XXXX identifiers (3–6 digits; spaced/Cyrillic forms)."""
     found: list[str] = []
     seen: set[str] = set()
 
-    def _add(digits: str) -> None:
+    def _add(match_str: str, digits: str) -> None:
         digits = re.sub(r"\s+", "", digits)
         if not (3 <= len(digits) <= 6 and digits.isdigit()):
             return
-        acc = f"ACC-{digits}"
+        prefix = "TELE" if "TELE" in match_str.upper() or "ТЕЛЕ" in match_str.upper() else "ACC"
+        acc = f"{prefix}-{digits}"
         if acc not in seen:
             seen.add(acc)
             found.append(acc)
 
     for m in _ACCOUNT_RE.finditer(text):
-        _add(m.group(1))
+        _add(m.group(0), m.group(1))
 
     for m in _ACCOUNT_SPACED_RE.finditer(text):
-        _add(m.group(1))
+        _add(m.group(0), m.group(1))
 
     for m in _ACCOUNT_LOOSE_RE.finditer(text):
-        _add(m.group(1))
+        _add(m.group(0), m.group(1))
 
     return found
 

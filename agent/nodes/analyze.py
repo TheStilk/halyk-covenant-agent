@@ -314,6 +314,29 @@ def analyze_one_covenant(
                 f"llm={computed.status}/{computed.actual} det={det.status}/{det.actual} | "
                 f"llm_reason={(computed.reasoning or '')[:160]}"
             )
+            # Guard: If det produced a degenerate/sentinel value (0.0, 9999.0, or threshold+1 sentinel),
+            # while LLM formula compute returned a meaningful non-degenerate number, prefer computed (LLM)!
+            def _is_degenerate(val: float) -> bool:
+                if val in (0.0, 9999.0):
+                    return True
+                x = val - 1.0
+                if x > 0 and x == round(x) and (x % 1000 == 0 or x % 10000 == 0):
+                    return True
+                return False
+
+            det_is_degen = _is_degenerate(float(det.actual))
+            llm_is_degen = _is_degenerate(float(computed.actual))
+
+            if det_is_degen and not llm_is_degen and computed.confidence > 0.05:
+                if computed.evidence_txn_id is None and det.evidence_txn_id:
+                    computed.evidence_txn_id = det.evidence_txn_id
+                computed.confidence = min(float(computed.confidence), 0.65)
+                computed.reasoning = (
+                    f"[mismatch → llm_compute (det degenerate {det.actual})] {computed.reasoning} | "
+                    f"DET={det.status}/{det.actual}"
+                )
+                return computed
+
             prefer_det = FORMULA_READER_PREFER_DET_ON_MISMATCH and not unknown
             if prefer_det:
                 chosen = det.model_copy(deep=True)
