@@ -43,13 +43,17 @@ def extract_metrics_node(state: AgentState) -> dict[str, Any]:
     for sc in scenario_ids:
         acc = sc_to_acc.get(sc, "")
         txns = transactions_for_account(ledger, acc) if ledger is not None and acc else []
-        m = extract_metrics_for_state(
-            scenario_id=sc,
-            account_id=acc,
-            transactions=txns,
-            docs_by_scenario=docs_by_scenario,
-            doc_index=doc_index,
-        )
+        try:
+            m = extract_metrics_for_state(
+                scenario_id=sc,
+                account_id=acc,
+                transactions=txns,
+                docs_by_scenario=docs_by_scenario,
+                doc_index=doc_index,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[metrics] ERROR extracting metrics for scenario {sc}: {exc}")
+            m = ScenarioMetrics(scenario_id=sc, account_id=acc, meta={"error": str(exc)})
         metrics_by_scenario[sc] = {
             "summary": m.summary_for_llm(),
             "aggregates": {

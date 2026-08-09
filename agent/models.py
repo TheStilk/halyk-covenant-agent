@@ -133,6 +133,11 @@ def ensure_filled_cell(cell: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             evidence = None
         if not evidence or evidence.lower() in {"null", "none", "n/a", "nan"}:
             evidence = None
+        else:
+            import re
+            evidence = re.sub(r"[^\w\-]", "", evidence).strip()
+            if not evidence:
+                evidence = None
 
     return {
         "status": status,

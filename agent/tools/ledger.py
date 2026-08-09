@@ -219,22 +219,31 @@ def filter_scenario_accounts(
 
 def transactions_for_account(ledger: pd.DataFrame, account_id: str) -> list[dict[str, Any]]:
     """Return ledger rows for one account as a list of dicts (JSON-serializable)."""
-    subset = ledger[ledger["account_id"] == account_id].copy()
+    subset = ledger[ledger["account_id"] == account_id]
     if subset.empty:
         return []
 
     records: list[dict[str, Any]] = []
-    for _, row in subset.iterrows():
+    for row in subset.to_dict("records"):
+        dt = row.get("date")
+        if pd.notna(dt) and hasattr(dt, "strftime"):
+            dt_str = dt.strftime("%Y-%m-%d")
+        elif pd.notna(dt):
+            dt_str = str(dt)[:10]
+        else:
+            dt_str = None
+
+        amt = row.get("amount")
         records.append(
             {
-                "txn_id": str(row["txn_id"]),
-                "date": row["date"].strftime("%Y-%m-%d") if pd.notna(row["date"]) else None,
-                "account_id": str(row["account_id"]),
-                "counterparty": str(row["counterparty"]) if pd.notna(row["counterparty"]) else "",
-                "description": str(row["description"]) if pd.notna(row["description"]) else "",
+                "txn_id": str(row.get("txn_id", "")),
+                "date": dt_str,
+                "account_id": str(row.get("account_id", "")),
+                "counterparty": str(row.get("counterparty", "")) if pd.notna(row.get("counterparty")) else "",
+                "description": str(row.get("description", "")) if pd.notna(row.get("description")) else "",
                 # None when CSV amount is blank/NaN — metrics may fill from notes/treasury
-                "amount": float(row["amount"]) if pd.notna(row["amount"]) else None,
-                "currency": str(row["currency"]) if pd.notna(row["currency"]) else "USD",
+                "amount": float(amt) if pd.notna(amt) else None,
+                "currency": str(row.get("currency", "USD")) if pd.notna(row.get("currency")) else "USD",
             }
         )
     return records

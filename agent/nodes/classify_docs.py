@@ -47,11 +47,29 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
     unreadable: list[str] = []
     blind_pages_by_doc: dict[str, list[dict[str, Any]]] = {}
 
-    for pdf_path in tqdm(pdfs, desc="classify docs", unit="doc"):
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _process_one_pdf(pdf_path: Path):
         try:
             extracted = read_pdf_with_cache(pdf_path, extract_document)
-            text = extracted.text or ""
+            return pdf_path, extracted, None
         except Exception as exc:  # noqa: BLE001
+            return pdf_path, None, exc
+
+    max_workers = min(8, os.cpu_count() or 4)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        pdf_results = list(
+            tqdm(
+                executor.map(_process_one_pdf, pdfs),
+                total=len(pdfs),
+                desc="classify docs (parallel)",
+                unit="doc",
+            )
+        )
+
+    for pdf_path, extracted, exc in pdf_results:
+        if exc is not None or extracted is None:
             print(f"[classify] extract failed {pdf_path.name}: {exc}")
             unreadable.append(pdf_path.name)
             bad_extracts.append(
@@ -62,6 +80,7 @@ def classify_docs_node(state: AgentState) -> dict[str, Any]:
                 }
             )
             continue
+        text = extracted.text or ""
 
         meta = extracted.meta or {}
         quality = meta.get("quality") or {}

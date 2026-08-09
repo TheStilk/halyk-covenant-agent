@@ -110,6 +110,12 @@ def assess_extract_quality(text: str | None) -> ExtractQuality:
         score *= 0.5
         reasons.append("low_alnum_density")
 
+    # CID font encoding Mojibake check (unregistered font glyphs like (cid:123))
+    cid_count = len(re.findall(r"\(cid:\d+\)", text))
+    if cid_count >= 5:
+        score *= 0.1
+        reasons.append("cid_font_mojibake")
+
     score = max(0.0, min(1.0, score))
 
     # Accept if clearly useful for covenant/ledger pipeline
