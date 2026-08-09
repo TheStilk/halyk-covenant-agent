@@ -56,8 +56,8 @@ def _clause_header_re(covenant_ids: Sequence[str]) -> re.Pattern[str]:
     # Allow NBSP in lead (PDF often uses \xa0 after NFKC may still leave spaces)
     return re.compile(
         rf"(?:"
-        rf"^{_LEAD_WS}Пункт\s+({alts})\b"
-        rf"|^{_LEAD_WS}Clause\s+({alts})\b"
+        rf"^{_LEAD_WS}(?:Пункт|Статья)\s+({alts})\b"
+        rf"|^{_LEAD_WS}(?:Clause|Article|Section)\s+({alts})\b"
         rf"|^{_LEAD_WS}Тармақ\s+({alts})\b"
         rf"|^{_LEAD_WS}({alts})\s*[—\-–.:)]\s+"
         rf")",
@@ -73,10 +73,13 @@ def _article_start_re(major: str) -> re.Pattern[str]:
         rf"[СC]татья\s+{m}\s*[—\-–:]\s*Финансовые\s+ковенанты"
         rf"|Article\s+{m}\s*[—\-–:]\s*(?:Financial\s+)?Covenants?"
         rf"|ARTICLE\s+{m}\s*[—\-–:]\s*(?:FINANCIAL\s+)?COVENANTS?"
+        rf"|Section\s+{m}\s*[—\-–:]\s*(?:Financial\s+)?Covenants?"
+        rf"|SECTION\s+{m}\s*[—\-–:]\s*(?:FINANCIAL\s+)?COVENANTS?"
         rf"|Бап\s+{m}\s*[—\-–:]\s*Қаржылық\s+ковенант"
         rf"|Бап\s+{m}\s*[—\-–:]\s*.{0,40}ковенант"
         rf"|[СC]татья\s+{m}\b"
         rf"|Article\s+{m}\b"
+        rf"|Section\s+{m}\b"
         rf"|Бап\s+{m}\b"
         rf")",
         re.IGNORECASE,

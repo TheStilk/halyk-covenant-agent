@@ -14,7 +14,7 @@
 
 **Команда:** «Сычуанский Соус» · `serkebaevmadiyar09@gmail.com`, `zhenis415@gmail.com`
 
-**Репозиторий:** https://github.com/TheStilk/halyk-covenant-agent
+**Операционная система / Окружение запуска:** Linux (Ubuntu 24.04 / Debian, x86_64). Боевые прогоны на открытом и приватном датасетах проводились строго в Linux-окружении со встроенным Tesseract OCR и Poppler.
 
 **Архитектура:** hybrid — **deterministic first**; LLM Formula Reader только для **unknown / low-conf** (интерпретация → code считает). Open set **100% без API-ключей**.
 
