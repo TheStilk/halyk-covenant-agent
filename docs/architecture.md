@@ -34,7 +34,7 @@ Phase 2/3 — полный граф до `collect_results`.
 
 **Принцип:** deterministic first, LLM only fallback. Не переписывать formula engine ради LLM.
 
-**Battle hardening (post-audit):** safe div0 (9999 sentinel), FX skip without rate, signed P&L nets, per-cell crash isolation, portable cache paths, RU/EN/**KZ** classify & thr keywords, OOM guards, `scripts/battle_run.sh`.
+**Battle hardening (post-audit):** safe div0 (9999 sentinel), FX skip without rate, signed P&L nets, per-cell crash isolation, portable cache paths, RU/EN/**KZ** classify & thr keywords, OOM guards, `FORMULA_READER_MAX_TEXT_CHARS = 2500`, 5% band-rescue confidence downgrade (`conf = 0.55`), single-fallback `structured_invoke` (RPM protection), `scenarios_without_kyc` diagnostics, `scripts/battle_run.sh`.
 
 ---
 

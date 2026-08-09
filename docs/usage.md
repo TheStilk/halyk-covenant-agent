@@ -49,7 +49,7 @@ cp .env.example .env
 | `USE_LLM_FORMULA_READER` | `true` | enable Formula Reader |
 | `LLM_FORMULA_READER_ONLY_UNKNOWN` | `true` | LLM **только** unknown/low-conf det |
 | `FORMULA_READER_PREFER_DET_ON_MISMATCH` | `true` | mismatch + known det → det |
-| `FORMULA_READER_MAX_TEXT_CHARS` | `900` | clip текста ковенанта в reader |
+| `FORMULA_READER_MAX_TEXT_CHARS` | `2500` | clip текста ковенанта в reader |
 | `MAX_TEXT_FILE_MB` | `16` | skip `.txt/.csv/...` larger than N MiB (OOM guard) |
 | `MAX_TABLE_PAGES` | `32` | pdfplumber `extract_tables` only first N pages |
 | `LLM_MAX_TOKENS` | `1024` | max completion tokens (JSON/FormulaSpec; floor 512) |
