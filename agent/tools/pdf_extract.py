@@ -111,8 +111,10 @@ def assess_extract_quality(text: str | None) -> ExtractQuality:
         reasons.append("low_alnum_density")
 
     # CID font encoding Mojibake check (unregistered font glyphs like (cid:123))
-    cid_count = len(re.findall(r"\(cid:\d+\)", text))
-    if cid_count >= 5:
+    cid_count = len(re.findall(r"\(cid:\d+\)", raw))
+    replacement_count = raw.count("\ufffd")
+    has_mojibake = cid_count >= 5 or replacement_count >= 5
+    if has_mojibake:
         score *= 0.1
         reasons.append("cid_font_mojibake")
 
@@ -120,15 +122,16 @@ def assess_extract_quality(text: str | None) -> ExtractQuality:
 
     # Accept if clearly useful for covenant/ledger pipeline
     ok = False
-    if meaningful_len >= 80 and marker_hits >= 1:
-        ok = True
-    elif meaningful_len >= 150 and cyr_ratio >= 0.15 and letter_count >= 80:
-        ok = True
-    elif meaningful_len >= 250 and letter_count >= 200:
-        # long clean extract without markers (some notes/KYC)
-        ok = True
-    elif meaningful_len >= 40 and marker_hits >= 2:
-        ok = True
+    if not has_mojibake:
+        if meaningful_len >= 80 and marker_hits >= 1:
+            ok = True
+        elif meaningful_len >= 150 and cyr_ratio >= 0.15 and letter_count >= 80:
+            ok = True
+        elif meaningful_len >= 250 and letter_count >= 200:
+            # long clean extract without markers (some notes/KYC)
+            ok = True
+        elif meaningful_len >= 40 and marker_hits >= 2:
+            ok = True
 
     if ok:
         reasons = [r for r in reasons if r not in {"no_domain_markers"}]
