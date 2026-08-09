@@ -155,6 +155,23 @@ def _retry_sleep(attempt: int, exc: BaseException) -> None:
     time.sleep(delay)
 
 
+def _parse_structured_json(schema: Type[T], content: str) -> T:
+    """Parse a schema instance out of raw LLM text (fenced or bare JSON)."""
+    import json
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    text = text.strip()
+    if not text.startswith("{"):
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            text = text[start : end + 1]
+    data = json.loads(text)
+    return schema.model_validate(data)
+
+
 def structured_invoke(
     schema: Type[T],
     *,
@@ -164,8 +181,6 @@ def structured_invoke(
     max_retries: Optional[int] = None,
 ) -> T:
     """Invoke structured output with simple retry + rate-limit backoff."""
-    import json
-    import re
     from langchain_core.messages import HumanMessage, SystemMessage
 
     if not is_llm_available():
@@ -184,27 +199,25 @@ def structured_invoke(
                 return result
             return schema.model_validate(result)
         except Exception as exc:  # noqa: BLE001
-            # Fallback: raw text invocation + markdown/text JSON extraction
-            try:
-                raw_text = invoke_json_text(system=system, user=user, temperature=temperature)
-                json_str = raw_text.strip()
-                if "```" in json_str:
-                    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", json_str, re.DOTALL)
-                    if match:
-                        json_str = match.group(1)
-                if not json_str.startswith("{"):
-                    match = re.search(r"(\{.*\})", json_str, re.DOTALL)
-                    if match:
-                        json_str = match.group(1)
-                data = json.loads(json_str)
-                return schema.model_validate(data)
-            except Exception:  # noqa: BLE001
-                pass
             last_exc = exc
             if attempt < retries:
                 _retry_sleep(attempt, exc)
                 continue
             break
+
+    # Fallback: raw text invocation + JSON schema hint after structured_output retries exhaust
+    try:
+        import json
+        schema_hint = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        json_user = (
+            f"{user}\n\nRespond with ONLY a single JSON object matching this "
+            f"JSON Schema — no prose, no markdown code fences:\n{schema_hint}"
+        )
+        raw_text = invoke_json_text(system=system, user=json_user, temperature=temperature)
+        return _parse_structured_json(schema, raw_text)
+    except Exception as exc2:  # noqa: BLE001
+        print(f"[llm] structured_invoke: raw-JSON fallback also failed: {exc2}")
+
     assert last_exc is not None
     raise last_exc
 
