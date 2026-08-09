@@ -62,8 +62,8 @@ def _metric_map(m: ScenarioMetrics) -> dict[str, float]:
     }
 
 
-def resolve_metric_value(name: str, m: ScenarioMetrics, *, needs_addbacks: bool) -> float:
-    """Resolve one metric token to a float from ScenarioMetrics."""
+def resolve_metric_value(name: str, m: ScenarioMetrics, *, needs_addbacks: bool) -> float | None:
+    """Resolve one metric token to a float from ScenarioMetrics. Returns None if unknown."""
     key = _METRIC_ALIASES.get(name.strip().lower(), name.strip().lower())
     key = key.replace(" ", "_")
     values = _metric_map(m)
@@ -90,9 +90,11 @@ def resolve_metric_value(name: str, m: ScenarioMetrics, *, needs_addbacks: bool)
                 return float(exact_sub[0][1])
             print(
                 f"[formula_compute] WARNING ambiguous fuzzy match for '{name}': "
-                f"{[k for k, _ in candidates]} → returning 0.0"
+                f"{[k for k, _ in candidates]} → returning None"
             )
-        return 0.0
+            return None
+        print(f"[formula_compute] WARNING unresolved metric token '{name}' → returning None")
+        return None
     return float(values[key])
 
 
@@ -101,10 +103,19 @@ def sum_metrics(
     m: ScenarioMetrics,
     *,
     needs_addbacks: bool,
-) -> float:
+) -> tuple[float, list[str]]:
+    """Returns (total_sum, list_of_unresolved_token_names)."""
     if not names:
-        return 0.0
-    return sum(resolve_metric_value(n, m, needs_addbacks=needs_addbacks) for n in names)
+        return 0.0, []
+    total = 0.0
+    unresolved: list[str] = []
+    for n in names:
+        val = resolve_metric_value(n, m, needs_addbacks=needs_addbacks)
+        if val is None:
+            unresolved.append(n)
+        else:
+            total += val
+    return total, unresolved
 
 
 def _coerce_thr(thr: object) -> float | None:
@@ -148,8 +159,9 @@ def compute_from_formula_spec(
 
     num_names = list(spec.numerator_metrics or [])
     den_names = list(spec.denominator_metrics or [])
-    num = sum_metrics(num_names, metrics, needs_addbacks=addbacks)
-    den = sum_metrics(den_names, metrics, needs_addbacks=addbacks)
+    num, unres_num = sum_metrics(num_names, metrics, needs_addbacks=addbacks)
+    den, unres_den = sum_metrics(den_names, metrics, needs_addbacks=addbacks)
+    unresolved_all = unres_num + unres_den
 
     kind = (spec.formula_kind or "").lower()
     thr = spec.threshold
@@ -161,13 +173,27 @@ def compute_from_formula_spec(
     actual = 0.0
     status = "BREACH"
 
+    if unresolved_all:
+        conf = 0.0
+        reasoning = (
+            f"[formula_spec:unresolved] {spec.raw_interpretation} | "
+            f"Unresolved metric tokens: {unresolved_all} → setting confidence=0.0"
+        )
+        return CovenantVerdict(
+            status="BREACH",
+            actual=0.0,
+            evidence_txn_id=None,
+            reasoning=reasoning,
+            confidence=0.0,
+        )
+
     if kind in {"difference", "revenue_minus_max_overhead"} and len(num_names) >= 1:
         if len(num_names) >= 2:
             head = resolve_metric_value(
                 num_names[0], metrics, needs_addbacks=addbacks
-            )
+            ) or 0.0
             rest = [
-                resolve_metric_value(n, metrics, needs_addbacks=addbacks)
+                resolve_metric_value(n, metrics, needs_addbacks=addbacks) or 0.0
                 for n in num_names[1:]
             ]
             raw = head - max(rest) if rest else head
@@ -176,7 +202,7 @@ def compute_from_formula_spec(
         actual = _r2(raw)
     elif kind in {"max_component", "max_single_overhead"}:
         parts = [
-            resolve_metric_value(n, metrics, needs_addbacks=addbacks)
+            resolve_metric_value(n, metrics, needs_addbacks=addbacks) or 0.0
             for n in (num_names or ["payroll", "utilities"])
         ]
         raw = max(parts) if parts else 0.0
