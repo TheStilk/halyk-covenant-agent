@@ -29,7 +29,6 @@
 | [docs/usage.md](docs/usage.md) | CLI, env, validate, diagnostics |
 | [docs/BATTLE_RUNBOOK.md](docs/BATTLE_RUNBOOK.md) | День сдачи: OCR → phase3 → validate |
 | [docs/data-and-scoring.md](docs/data-and-scoring.md) | Датасет, taxonomy, scoring |
-| [docs/research/](docs/research/) | Заметки (concurrency / PDF / LLM recovery) — не runtime |
 
 ---
 
@@ -158,7 +157,7 @@ PDF (opaque hashes) + master_ledger_*.csv
 ```
 hakaton/
 ├── README.md
-├── docs/                   # usage, architecture, battle runbook, research/
+├── docs/                   # usage, architecture, battle runbook
 ├── archive/                # historical LLM smoke (no keys)
 ├── pyproject.toml / uv.lock
 ├── .env.example
