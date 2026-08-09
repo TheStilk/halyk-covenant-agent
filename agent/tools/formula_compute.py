@@ -175,12 +175,13 @@ def compute_from_formula_spec(
 
     if unresolved_all:
         conf = 0.0
+        fallback_status = "COMPLIANT" if comparison == "max" else "BREACH"
         reasoning = (
             f"[formula_spec:unresolved] {spec.raw_interpretation} | "
             f"Unresolved metric tokens: {unresolved_all} → setting confidence=0.0"
         )
         return CovenantVerdict(
-            status="BREACH",
+            status=fallback_status,  # type: ignore[arg-type]
             actual=0.0,
             evidence_txn_id=None,
             reasoning=reasoning,

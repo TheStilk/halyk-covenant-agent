@@ -324,7 +324,14 @@ def analyze_one_covenant(
                     f"{det.reasoning} | spec={spec.model_dump()}"
                 )
                 return chosen
-            # unknown formula → trust LLM-compute more
+            # unknown formula → trust LLM-compute unless unresolved tokens (confidence <= 0.05)
+            if computed.confidence <= 0.05:
+                chosen = det.model_copy(deep=True)
+                chosen.reasoning = (
+                    f"[unresolved token → det] {computed.reasoning} | {det.reasoning}"
+                )
+                return chosen
+
             if computed.evidence_txn_id is None and det.evidence_txn_id:
                 computed.evidence_txn_id = det.evidence_txn_id
             computed.confidence = min(float(computed.confidence), 0.65)
