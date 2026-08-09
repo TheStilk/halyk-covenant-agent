@@ -73,17 +73,21 @@ def collect_battle_diagnostics(
             missing_by_sc[sc] = dict(ma)
     missing_total = sum(len(v) for v in missing_by_sc.values())
 
-    # --- scenarios without loan / notes ---
+    # --- scenarios without loan / notes / kyc ---
     no_loan: list[str] = []
     no_notes: list[str] = []
+    no_kyc: list[str] = []
     loan_key = DocType.LOAN_AGREEMENT.value
     notes_key = DocType.FINANCIAL_NOTES.value
+    kyc_key = DocType.KYC.value
     for sc in scenario_ids:
         by_type = docs_by.get(sc) or {}
         if not by_type.get(loan_key):
             no_loan.append(sc)
         if not by_type.get(notes_key):
             no_notes.append(sc)
+        if not by_type.get(kyc_key):
+            no_kyc.append(sc)
 
     report = {
         "cells_filled": cells_filled,
@@ -103,6 +107,7 @@ def collect_battle_diagnostics(
         "missing_amounts_by_scenario": missing_by_sc,
         "scenarios_without_loan": no_loan,
         "scenarios_without_notes": no_notes,
+        "scenarios_without_kyc": no_kyc,
         "llm_fallback_cells": list(diagnostics.get("llm_fallback_cells") or []),
         "elapsed_sec": elapsed_sec,
         "scenario_count": len(scenario_ids),
@@ -124,6 +129,7 @@ def format_battle_diagnostics(report: dict[str, Any]) -> str:
     miss_by = report.get("missing_amounts_by_scenario") or {}
     no_loan = report.get("scenarios_without_loan") or []
     no_notes = report.get("scenarios_without_notes") or []
+    no_kyc = report.get("scenarios_without_kyc") or []
     elapsed = report.get("elapsed_sec")
 
     def _preview(items: list[Any], n: int = 6) -> str:
@@ -157,6 +163,7 @@ def format_battle_diagnostics(report: dict[str, Any]) -> str:
         + (f" [{miss_preview}]" if miss_n else ""),
         f"scenarios without loan: {no_loan if no_loan else '—'}",
         f"scenarios without notes: {no_notes if no_notes else '—'}",
+        f"scenarios without kyc: {no_kyc if no_kyc else '—'}",
         f"time total: {elapsed_s}",
         "REMINDER: ALWAYS rm -rf doc_cache/ on new machine or after extractor changes",
     ]
